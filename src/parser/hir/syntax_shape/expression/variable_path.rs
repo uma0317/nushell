@@ -1,8 +1,9 @@
+use crate::parser::hir::path::PathMember;
 use crate::parser::hir::syntax_shape::{
     color_fallible_syntax, color_fallible_syntax_with, expand_atom, expand_expr, expand_syntax,
     parse_single_node, AnyExpressionShape, AtomicToken, BareShape, ExpandContext, ExpandExpression,
-    ExpandSyntax, ExpansionRule, FallibleColorSyntax, FlatShape, ParseError, Peeked, SkipSyntax,
-    StringShape, TestSyntax, WhitespaceShape,
+    ExpandSyntax, ExpansionRule, FallibleColorSyntax, FlatShape, IntShape, ParseError, Peeked,
+    SkipSyntax, StringShape, TestSyntax, WhitespaceShape,
 };
 use crate::parser::{hir, hir::Expression, hir::TokensIterator, Operator, RawToken};
 use crate::prelude::*;
@@ -32,7 +33,7 @@ impl ExpandExpression for VariablePathShape {
         let head = expand_expr(&VariableShape, token_nodes, context)?;
         let start = head.span;
         let mut end = start;
-        let mut tail: Vec<Spanned<String>> = vec![];
+        let mut tail: Vec<PathMember> = vec![];
 
         loop {
             match DotShape.skip(token_nodes, context) {
@@ -40,8 +41,8 @@ impl ExpandExpression for VariablePathShape {
                 Ok(_) => {}
             }
 
-            let syntax = expand_syntax(&MemberShape, token_nodes, context)?;
-            let member = syntax.to_spanned_string(context.source);
+            let member = expand_syntax(&MemberShape, token_nodes, context)?;
+            let member = member.to_path_member(context.source);
 
             end = member.span;
             tail.push(member);
@@ -206,8 +207,21 @@ impl FallibleColorSyntax for PathTailShape {
     }
 }
 
+impl FormatDebug for Spanned<Vec<PathMember>> {
+    fn fmt_debug(&self, f: &mut DebugFormatter, source: &str) -> fmt::Result {
+        f.say_list(
+            "path tail",
+            &self.item,
+            |f| write!(f, "["),
+            |f, item| write!(f, "{}", item.debug(source)),
+            |f| write!(f, " "),
+            |f| write!(f, "]"),
+        )
+    }
+}
+
 impl ExpandSyntax for PathTailShape {
-    type Output = Spanned<Vec<Spanned<String>>>;
+    type Output = Spanned<Vec<PathMember>>;
 
     fn name(&self) -> &'static str {
         "path continuation"
@@ -219,7 +233,7 @@ impl ExpandSyntax for PathTailShape {
         context: &ExpandContext,
     ) -> Result<Self::Output, ParseError> {
         let mut end: Option<Span> = None;
-        let mut tail = vec![];
+        let mut tail: Vec<PathMember> = vec![];
 
         loop {
             match DotShape.skip(token_nodes, context) {
@@ -227,8 +241,8 @@ impl ExpandSyntax for PathTailShape {
                 Ok(_) => {}
             }
 
-            let syntax = expand_syntax(&MemberShape, token_nodes, context)?;
-            let member = syntax.to_spanned_string(context.source);
+            let member = expand_syntax(&MemberShape, token_nodes, context)?;
+            let member = member.to_path_member(context.source);
             end = Some(member.span);
             tail.push(member);
         }
@@ -252,7 +266,7 @@ impl ExpandSyntax for PathTailShape {
 
 #[derive(Debug, Clone)]
 pub enum ExpressionContinuation {
-    DotSuffix(Span, Spanned<String>),
+    DotSuffix(Span, PathMember),
     InfixSuffix(Spanned<Operator>, Expression),
 }
 
@@ -303,7 +317,7 @@ impl ExpandSyntax for ExpressionContinuationShape {
             // If a `.` was matched, it's a `Path`, and we expect a `Member` next
             Ok(dot) => {
                 let syntax = expand_syntax(&MemberShape, token_nodes, context)?;
-                let member = syntax.to_spanned_string(context.source);
+                let member = syntax.to_path_member(context.source);
 
                 Ok(ExpressionContinuation::DotSuffix(dot, member))
             }
@@ -533,16 +547,28 @@ impl FallibleColorSyntax for VariableShape {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub enum Member {
     String(/* outer */ Span, /* inner */ Span),
+    Int(BigInt, Span),
     Bare(Span),
+}
+
+impl Member {
+    pub fn to_path_member(&self, source: &Text) -> PathMember {
+        match self {
+            Member::String(outer, inner) => PathMember::string(inner.slice(source), *inner),
+            Member::Int(int, span) => PathMember::int(int.clone(), *span),
+            Member::Bare(span) => PathMember::string(span.slice(source), *span),
+        }
+    }
 }
 
 impl FormatDebug for Member {
     fn fmt_debug(&self, f: &mut DebugFormatter, source: &str) -> fmt::Result {
         match self {
             Member::String(outer, _) => write!(f, "member ({})", outer.slice(source)),
+            Member::Int(_, int) => write!(f, "member ({})", int.slice(source)),
             Member::Bare(bare) => write!(f, "member ({})", bare.slice(source)),
         }
     }
@@ -552,6 +578,7 @@ impl HasSpan for Member {
     fn span(&self) -> Span {
         match self {
             Member::String(outer, ..) => *outer,
+            Member::Int(_, int) => *int,
             Member::Bare(name) => *name,
         }
     }
@@ -561,6 +588,7 @@ impl Member {
     pub(crate) fn to_expr(&self) -> hir::Expression {
         match self {
             Member::String(outer, inner) => hir::Expression::string(*inner, *outer),
+            Member::Int(number, span) => hir::Expression::number(number.clone(), *span),
             Member::Bare(span) => hir::Expression::string(*span, *span),
         }
     }
@@ -568,20 +596,15 @@ impl Member {
     pub(crate) fn span(&self) -> Span {
         match self {
             Member::String(outer, _inner) => *outer,
+            Member::Int(_, span) => *span,
             Member::Bare(span) => *span,
-        }
-    }
-
-    pub(crate) fn to_spanned_string(&self, source: &str) -> Spanned<String> {
-        match self {
-            Member::String(outer, inner) => inner.string(source).spanned(*outer),
-            Member::Bare(span) => span.spanned_string(source),
         }
     }
 
     pub(crate) fn tagged_type_name(&self) -> Tagged<&'static str> {
         match self {
             Member::String(outer, _inner) => "string".tagged(outer),
+            Member::Int(_, span) => "integer".tagged(span),
             Member::Bare(span) => "word".tagged(Tag {
                 span: *span,
                 anchor: None,
@@ -914,6 +937,8 @@ impl ExpandSyntax for MemberShape {
 
             return Ok(Member::String(outer, inner));
         }
+
+        if let Ok(int) = expand_syntax(&IntShape, token_nodes, context) {}
 
         Err(token_nodes.peek_any().type_error("column"))
     }

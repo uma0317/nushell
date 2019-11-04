@@ -1,6 +1,7 @@
 use crate::commands::WholeStreamCommand;
 use crate::data::Value;
 use crate::errors::ShellError;
+use crate::parser::hir::path::{PathMember, RawPathMember};
 use crate::prelude::*;
 use crate::utils::did_you_mean;
 use log::trace;
@@ -44,7 +45,7 @@ impl WholeStreamCommand for Get {
     }
 }
 
-pub type ColumnPath = Vec<Tagged<String>>;
+pub type ColumnPath = Vec<PathMember>;
 
 pub fn get_column_path(
     path: &ColumnPath,
@@ -61,14 +62,14 @@ pub fn get_column_path(
                     let total = rows.len();
                     let end_tag = match fields.iter().nth_back(if fields.len() > 2 { 1 } else { 0 })
                     {
-                        Some(last_field) => last_field.tag(),
-                        None => column_path_tried.tag(),
+                        Some(last_field) => last_field.span(),
+                        None => column_path_tried.span(),
                     };
 
                     return ShellError::labeled_error_with_secondary(
                         "Row not found",
                         format!("There isn't a row indexed at '{}'", **column_path_tried),
-                        column_path_tried.tag(),
+                        column_path_tried.span(),
                         format!("The table only has {} rows (0..{})", total, total - 1),
                         end_tag,
                     );
@@ -76,22 +77,24 @@ pub fn get_column_path(
                 _ => {}
             }
 
-            match did_you_mean(&obj_source, &column_path_tried) {
-                Some(suggestions) => {
-                    return ShellError::labeled_error(
-                        "Unknown column",
-                        format!("did you mean '{}'?", suggestions[0].1),
-                        tag_for_tagged_list(fields.iter().map(|p| p.tag())),
-                    )
-                }
-                None => {
-                    return ShellError::labeled_error(
-                        "Unknown column",
-                        "row does not contain this column",
-                        tag_for_tagged_list(fields.iter().map(|p| p.tag())),
-                    )
+            if let RawPathMember::String(name) = &column_path_tried.item {
+                match did_you_mean(&obj_source, &name.clone().tagged(column_path_tried.span)) {
+                    Some(suggestions) => {
+                        return ShellError::labeled_error(
+                            "Unknown column",
+                            format!("did you mean '{}'?", suggestions[0].1),
+                            span_for_spanned_list(fields.iter().map(|p| p.span())),
+                        )
+                    }
+                    None => {}
                 }
             }
+
+            return ShellError::labeled_error(
+                "Unknown column",
+                "row does not contain this column",
+                span_for_spanned_list(fields.iter().map(|p| p.span())),
+            );
         }),
     );
 

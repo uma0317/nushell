@@ -27,6 +27,7 @@ mod utils;
 pub use crate::commands::command::{CallInfo, ReturnSuccess, ReturnValue};
 pub use crate::context::AnchorLocation;
 pub use crate::env::host::BasicHost;
+pub use crate::parser::hir::path::{PathMember, RawPathMember};
 pub use crate::parser::hir::SyntaxShape;
 pub use crate::parser::parse::token_tree_builder::TokenTreeBuilder;
 pub use crate::plugin::{serve_plugin, Plugin};

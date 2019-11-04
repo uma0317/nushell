@@ -1,10 +1,10 @@
 use itertools::Itertools;
 use nu::{
-    serve_plugin, CallInfo, Plugin, ReturnSuccess, ReturnValue, ShellError, Signature, SyntaxShape,
-    Tagged, TaggedItem, Value,
+    serve_plugin, CallInfo, PathMember, Plugin, ReturnSuccess, ReturnValue, ShellError, Signature,
+    SyntaxShape, Tagged, TaggedItem, Value,
 };
 
-pub type ColumnPath = Vec<Tagged<String>>;
+pub type ColumnPath = Vec<PathMember>;
 
 struct Add {
     field: Option<ColumnPath>,
@@ -70,7 +70,7 @@ impl Plugin for Add {
                     item: Value::Table(_),
                     ..
                 } => {
-                    self.field = Some(table.as_column_path()?.item);
+                    self.field = Some(table.as_column_path()?);
                 }
 
                 value => return Err(ShellError::type_error("table", value.tagged_type_name())),

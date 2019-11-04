@@ -72,6 +72,38 @@ impl<'me, 'args> DebugFormatter<'me, 'args> {
         block(self)
     }
 
+    pub fn say_list<T, U: IntoIterator<Item = T>>(
+        &mut self,
+        kind: &str,
+        list: U,
+        open: impl Fn(&mut Self) -> std::fmt::Result,
+        mut block: impl FnMut(&mut Self, &T) -> std::fmt::Result,
+        interleave: impl Fn(&mut Self) -> std::fmt::Result,
+        close: impl Fn(&mut Self) -> std::fmt::Result,
+    ) -> std::fmt::Result {
+        open(self)?;
+        write!(self, " ")?;
+
+        let mut list = list.into_iter();
+
+        let first = match list.next() {
+            None => return Ok(()),
+            Some(first) => first,
+        };
+
+        block(self, &first)?;
+
+        for item in list {
+            interleave(self)?;
+            block(self, &item)?;
+        }
+
+        write!(self, " ")?;
+        close(self)?;
+
+        Ok(())
+    }
+
     pub fn say_dict<'debuggable>(
         &mut self,
         kind: &str,

@@ -5,6 +5,42 @@ use getset::{Getters, MutGetters};
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
+#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize)]
+pub enum RawPathMember {
+    String(String),
+    Int(BigInt),
+}
+
+pub type PathMember = Spanned<RawPathMember>;
+
+impl fmt::Display for RawPathMember {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            RawPathMember::String(string) => write!(f, "{}", string),
+            RawPathMember::Int(int) => write!(f, "{}", int),
+        }
+    }
+}
+
+impl PathMember {
+    pub fn string(string: impl Into<String>, span: impl Into<Span>) -> PathMember {
+        RawPathMember::String(string.into()).spanned(span.into())
+    }
+
+    pub fn int(int: impl Into<BigInt>, span: impl Into<Span>) -> PathMember {
+        RawPathMember::Int(int.into()).spanned(span.into())
+    }
+}
+
+impl FormatDebug for PathMember {
+    fn fmt_debug(&self, f: &mut DebugFormatter, source: &str) -> fmt::Result {
+        match &self.item {
+            RawPathMember::String(string) => f.say_str("member", &string),
+            RawPathMember::Int(int) => f.say_block("member", |f| write!(f, "{}", int)),
+        }
+    }
+}
+
 #[derive(
     Debug,
     Clone,
@@ -23,7 +59,7 @@ use std::fmt;
 pub struct Path {
     head: Expression,
     #[get_mut = "pub(crate)"]
-    tail: Vec<Spanned<String>>,
+    tail: Vec<PathMember>,
 }
 
 impl fmt::Display for Path {
@@ -39,7 +75,7 @@ impl fmt::Display for Path {
 }
 
 impl Path {
-    pub(crate) fn parts(self) -> (Expression, Vec<Spanned<String>>) {
+    pub(crate) fn parts(self) -> (Expression, Vec<PathMember>) {
         (self.head, self.tail)
     }
 }

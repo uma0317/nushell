@@ -2,6 +2,7 @@ use crate::context::CommandRegistry;
 use crate::data::TaggedDictBuilder;
 use crate::errors::ShellError;
 use crate::evaluate::{evaluate_baseline_expr, Scope};
+use crate::parser::hir::path::{PathMember, RawPathMember};
 use crate::parser::{hir, Operator};
 use crate::prelude::*;
 use crate::Text;
@@ -409,13 +410,13 @@ impl Tagged<Value> {
         ValueDebug { value: self }
     }
 
-    pub fn as_column_path(&self) -> Result<Tagged<Vec<Tagged<String>>>, ShellError> {
-        let mut out: Vec<Tagged<String>> = vec![];
+    pub fn as_column_path(&self) -> Result<Tagged<Vec<PathMember>>, ShellError> {
+        let mut out: Vec<PathMember> = vec![];
 
         match &self.item {
             Value::Table(table) => {
                 for item in table {
-                    out.push(item.as_string()?.tagged(&item.tag));
+                    out.push(item.as_path_member()?);
                 }
             }
 
@@ -428,6 +429,23 @@ impl Tagged<Value> {
         }
 
         Ok(out.tagged(&self.tag))
+    }
+
+    pub(crate) fn as_path_member(&self) -> Result<PathMember, ShellError> {
+        match &self.item {
+            Value::Primitive(primitive) => match primitive {
+                Primitive::Int(int) => Ok(PathMember::int(int.clone(), self.tag.span)),
+                Primitive::String(string) => Ok(PathMember::string(string, self.tag.span)),
+                other => Err(ShellError::type_error(
+                    "path member",
+                    other.type_name().tagged(self.tag.span),
+                )),
+            },
+            other => Err(ShellError::type_error(
+                "path member",
+                other.type_name().tagged(self.tag.span),
+            )),
+        }
     }
 
     pub(crate) fn as_string(&self) -> Result<String, ShellError> {
@@ -481,6 +499,78 @@ impl Value {
         }
     }
 
+    pub(crate) fn get_mut_data_by_index(&mut self, idx: usize) -> Option<&mut Tagged<Value>> {
+        match self {
+            Value::Table(value_set) => value_set.get_mut(idx),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn get_data_by_member(&self, name: &PathMember) -> Option<&Tagged<Value>> {
+        match self {
+            Value::Row(o) => match &name.item {
+                RawPathMember::String(string) => o.get_data_by_key(&string),
+                RawPathMember::Int(int) => None,
+            },
+            Value::Table(l) => match &name.item {
+                RawPathMember::String(string) => {
+                    for item in l {
+                        match item {
+                            Tagged {
+                                item: Value::Row(o),
+                                ..
+                            } => match o.get_data_by_key(&string) {
+                                Some(v) => return Some(v),
+                                None => {}
+                            },
+                            _ => {}
+                        }
+                    }
+                    None
+                }
+                RawPathMember::Int(int) => {
+                    let index = int.to_usize()?;
+                    self.get_data_by_index(index)
+                }
+            },
+            _ => None,
+        }
+    }
+
+    pub(crate) fn get_mut_data_by_member(
+        &mut self,
+        name: &PathMember,
+    ) -> Option<&mut Tagged<Value>> {
+        match self {
+            Value::Row(o) => match &name.item {
+                RawPathMember::String(string) => o.get_mut_data_by_key(&string),
+                RawPathMember::Int(int) => None,
+            },
+            Value::Table(l) => match &name.item {
+                RawPathMember::String(string) => {
+                    for item in l {
+                        match item {
+                            Tagged {
+                                item: Value::Row(o),
+                                ..
+                            } => match o.get_mut_data_by_key(&string) {
+                                Some(v) => return Some(v),
+                                None => {}
+                            },
+                            _ => {}
+                        }
+                    }
+                    None
+                }
+                RawPathMember::Int(int) => {
+                    let index = int.to_usize()?;
+                    l.get_mut(index)
+                }
+            },
+            _ => None,
+        }
+    }
+
     pub(crate) fn get_data_by_key(&self, name: &str) -> Option<&Tagged<Value>> {
         match self {
             Value::Row(o) => o.get_data_by_key(name),
@@ -528,26 +618,12 @@ impl Value {
     pub fn get_data_by_column_path(
         &self,
         tag: Tag,
-        path: &Vec<Tagged<String>>,
-        callback: Box<dyn FnOnce((&Value, &Tagged<String>)) -> ShellError>,
+        path: &Vec<PathMember>,
+        callback: Box<dyn FnOnce((&Value, &PathMember)) -> ShellError>,
     ) -> Result<Option<Tagged<&Value>>, ShellError> {
         let mut current = self;
         for p in path {
-            // note:
-            // This will eventually be refactored once we are able
-            // to parse correctly column_paths and get them deserialized
-            // to values for us.
-            let value = match p.item().parse::<usize>() {
-                Ok(number) => match current {
-                    Value::Table(_) => current.get_data_by_index(number),
-                    Value::Row(_) => current.get_data_by_key(p),
-                    _ => None,
-                },
-                Err(_) => match self {
-                    Value::Table(_) | Value::Row(_) => current.get_data_by_key(p),
-                    _ => None,
-                },
-            }; // end
+            let value = self.get_data_by_member(p);
 
             match value {
                 Some(v) => current = v,
@@ -614,9 +690,9 @@ impl Value {
     pub fn insert_data_at_column_path(
         &self,
         tag: Tag,
-        split_path: &Vec<Tagged<String>>,
+        split_path: &Vec<Tagged<PathMember>>,
         new_value: Value,
-    ) -> Option<Tagged<Value>> {
+    ) -> Result<Tagged<Value>, ShellError> {
         let mut new_obj = self.clone();
 
         if let Value::Row(ref mut o) = new_obj {
@@ -627,7 +703,7 @@ impl Value {
                 current
                     .entries
                     .insert(split_path[0].item.clone(), new_value.tagged(&tag));
-                return Some(new_obj.tagged(&tag));
+                return Ok(new_obj.tagged(&tag));
             }
 
             for idx in 0..split_path.len() {
@@ -665,14 +741,14 @@ impl Value {
     pub fn replace_data_at_column_path(
         &self,
         tag: Tag,
-        split_path: &Vec<Tagged<String>>,
+        split_path: &Vec<PathMember>,
         replaced_value: Value,
     ) -> Option<Tagged<Value>> {
         let mut new_obj = self.clone();
         let mut current = &mut new_obj;
 
         for idx in 0..split_path.len() {
-            match current.get_mut_data_by_key(&split_path[idx].item) {
+            match current.get_mut_data_by_member(&split_path[idx]) {
                 Some(next) => {
                     if idx == (split_path.len() - 1) {
                         *next = replaced_value.tagged(&tag);
@@ -935,6 +1011,7 @@ fn coerce_compare_primitive(
 mod tests {
 
     use crate::data::meta::*;
+    use crate::parser::hir::path::PathMember;
     use crate::ShellError;
     use crate::Value;
     use indexmap::IndexMap;
@@ -951,19 +1028,14 @@ mod tests {
         Value::table(list).tagged_unknown()
     }
 
-    fn error_callback() -> impl FnOnce((&Value, &Tagged<String>)) -> ShellError {
+    fn error_callback() -> impl FnOnce((&Value, &PathMember)) -> ShellError {
         move |(_obj_source, _column_path_tried)| ShellError::unimplemented("will never be called.")
     }
 
-    fn column_path(paths: &Vec<Tagged<Value>>) -> Tagged<Vec<Tagged<String>>> {
-        table(
-            &paths
-                .iter()
-                .map(|p| string(p.as_string().unwrap()))
-                .collect(),
-        )
-        .as_column_path()
-        .unwrap()
+    fn column_path(paths: &Vec<Tagged<Value>>) -> Tagged<Vec<PathMember>> {
+        table(&paths.iter().cloned().collect())
+            .as_column_path()
+            .unwrap()
     }
 
     #[test]

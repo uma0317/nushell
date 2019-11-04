@@ -351,6 +351,23 @@ pub fn tag_for_tagged_list(mut iter: impl Iterator<Item = Tag>) -> Tag {
     }
 }
 
+#[allow(unused)]
+pub fn span_for_spanned_list(mut iter: impl Iterator<Item = Span>) -> Span {
+    let first = iter.next();
+
+    let first = match first {
+        None => return Span::unknown(),
+        Some(first) => first,
+    };
+
+    let last = iter.last();
+
+    match last {
+        None => first,
+        Some(last) => first.until(last),
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Ord, PartialOrd, Serialize, Deserialize, Hash)]
 pub struct Span {
     start: usize,

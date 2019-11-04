@@ -7,6 +7,7 @@ pub(crate) mod path;
 pub(crate) mod syntax_shape;
 pub(crate) mod tokens_iterator;
 
+use crate::parser::hir::path::PathMember;
 use crate::parser::{registry, Operator, Unit};
 use crate::prelude::*;
 use derive_new::new;
@@ -180,22 +181,24 @@ impl Expression {
 
     pub(crate) fn path(
         head: Expression,
-        tail: Vec<Spanned<impl Into<String>>>,
+        tail: Vec<impl Into<PathMember>>,
         span: impl Into<Span>,
     ) -> Expression {
-        let tail = tail.into_iter().map(|t| t.map(|s| s.into())).collect();
+        let tail = tail.into_iter().map(|t| t.into()).collect();
         RawExpression::Path(Box::new(Path::new(head, tail))).spanned(span.into())
     }
 
-    pub(crate) fn dot_member(head: Expression, next: Spanned<impl Into<String>>) -> Expression {
+    pub(crate) fn dot_member(head: Expression, next: impl Into<PathMember>) -> Expression {
         let Spanned { item, span } = head;
+        let next = next.into();
+
         let new_span = head.span.until(next.span);
 
         match item {
             RawExpression::Path(path) => {
                 let (head, mut tail) = path.parts();
 
-                tail.push(next.map(|i| i.into()));
+                tail.push(next);
                 Expression::path(head, tail, new_span)
             }
 

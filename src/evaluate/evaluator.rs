@@ -1,5 +1,6 @@
 use crate::data::base::Block;
 use crate::errors::ArgumentError;
+use crate::parser::hir::path::RawPathMember;
 use crate::parser::{
     hir::{self, Expression, RawExpression},
     CommandRegistry, Text,
@@ -104,32 +105,34 @@ pub(crate) fn evaluate_baseline_expr(
             let value = evaluate_baseline_expr(path.head(), registry, scope, source)?;
             let mut item = value;
 
-            for name in path.tail() {
-                let next = item.get_data_by_key(name);
+            for member in path.tail() {
+                let next = item.get_data_by_member(member);
 
                 match next {
                     None => {
                         let possibilities = item.data_descriptors();
 
-                        let mut possible_matches: Vec<_> = possibilities
-                            .iter()
-                            .map(|x| (natural::distance::levenshtein_distance(x, &name), x))
-                            .collect();
+                        if let RawPathMember::String(name) = &member.item {
+                            let mut possible_matches: Vec<_> = possibilities
+                                .iter()
+                                .map(|x| (natural::distance::levenshtein_distance(x, &name), x))
+                                .collect();
 
-                        possible_matches.sort();
+                            possible_matches.sort();
 
-                        if possible_matches.len() > 0 {
-                            return Err(ShellError::labeled_error(
-                                "Unknown column",
-                                format!("did you mean '{}'?", possible_matches[0].1),
-                                &tag,
-                            ));
-                        } else {
-                            return Err(ShellError::labeled_error(
-                                "Unknown column",
-                                "row does not have this column",
-                                &tag,
-                            ));
+                            if possible_matches.len() > 0 {
+                                return Err(ShellError::labeled_error(
+                                    "Unknown column",
+                                    format!("did you mean '{}'?", possible_matches[0].1),
+                                    &tag,
+                                ));
+                            } else {
+                                return Err(ShellError::labeled_error(
+                                    "Unknown column",
+                                    "row does not have this column",
+                                    &tag,
+                                ));
+                            }
                         }
                     }
                     Some(next) => {

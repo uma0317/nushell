@@ -2,6 +2,7 @@ use crate::commands::classified::InternalCommand;
 use crate::commands::ClassifiedCommand;
 use crate::env::host::BasicHost;
 use crate::parser::hir;
+use crate::parser::hir::path::PathMember;
 use crate::parser::hir::syntax_shape::*;
 use crate::parser::hir::TokensIterator;
 use crate::parser::parse::token_tree_builder::{CurriedToken, TokenTreeBuilder as b};
@@ -27,7 +28,7 @@ fn test_parse_path() {
             let bare = tokens[2].expect_bare();
             hir::Expression::path(
                 hir::Expression::it_variable(inner_var, outer_var),
-                vec!["cpu".spanned(bare)],
+                vec![PathMember::string("cpu", bare)],
                 outer_var.until(bare),
             )
         },
@@ -49,7 +50,10 @@ fn test_parse_path() {
 
             hir::Expression::path(
                 hir::Expression::variable(inner_var, outer_var),
-                vec!["amount".spanned(amount), "max ghz".spanned(outer_max_ghz)],
+                vec![
+                    PathMember::string("amount", amount),
+                    PathMember::string("max ghz", outer_max_ghz),
+                ],
                 outer_var.until(outer_max_ghz),
             )
         },
