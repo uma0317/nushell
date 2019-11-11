@@ -1,6 +1,7 @@
 use nu::{
-    did_you_mean, serve_plugin, tag_for_tagged_list, CallInfo, Plugin, Primitive, ReturnSuccess,
-    ReturnValue, ShellError, Signature, SyntaxShape, Tagged, TaggedItem, Value,
+    did_you_mean, serve_plugin, span_for_spanned_list, CallInfo, ColumnPath, Plugin, Primitive,
+    ReturnSuccess, ReturnValue, ShellError, ShellTypeName, Signature, SyntaxShape, Tagged,
+    TaggedItem, Value,
 };
 
 #[derive(Debug, Eq, PartialEq)]
@@ -10,10 +11,8 @@ enum Action {
     ToInteger,
 }
 
-pub type ColumnPath = Vec<Tagged<String>>;
-
 struct Str {
-    field: Option<ColumnPath>,
+    field: Option<Tagged<ColumnPath>>,
     params: Option<Vec<String>>,
     error: Option<String>,
     action: Option<Action>,
@@ -45,7 +44,7 @@ impl Str {
         Ok(applied)
     }
 
-    fn for_field(&mut self, column_path: ColumnPath) {
+    fn for_field(&mut self, column_path: Tagged<ColumnPath>) {
         self.field = Some(column_path);
     }
 
@@ -94,35 +93,29 @@ impl Str {
                 Some(ref f) => {
                     let fields = f.clone();
 
-                    let replace_for = value.item.get_data_by_column_path(
-                        value.tag(),
-                        &f,
-                        Box::new(move |(obj_source, column_path_tried)| {
-                            match did_you_mean(&obj_source, &column_path_tried) {
-                                Some(suggestions) => {
-                                    return ShellError::labeled_error(
-                                        "Unknown column",
-                                        format!("did you mean '{}'?", suggestions[0].1),
-                                        tag_for_tagged_list(fields.iter().map(|p| p.tag())),
-                                    )
+                    let replace_for =
+                        value.get_data_by_column_path(
+                            &f,
+                            Box::new(move |(obj_source, column_path_tried, error)| {
+                                match did_you_mean(&obj_source, &column_path_tried) {
+                                    Some(suggestions) => {
+                                        return ShellError::labeled_error(
+                                            "Unknown column",
+                                            format!("did you mean '{}'?", suggestions[0].1),
+                                            span_for_spanned_list(fields.iter().map(|p| p.span)),
+                                        )
+                                    }
+                                    None => return error,
                                 }
-                                None => {
-                                    return ShellError::labeled_error(
-                                        "Unknown column",
-                                        "row does not contain this column",
-                                        tag_for_tagged_list(fields.iter().map(|p| p.tag())),
-                                    )
-                                }
-                            }
-                        }),
-                    );
+                            }),
+                        );
 
                     let replacement = match replace_for {
                         Ok(got) => match got {
                             Some(result) => self.strutils(result.map(|x| x.clone()))?,
                             None => {
                                 return Err(ShellError::labeled_error(
-                                    "inc could not find field to replace",
+                                    "str could not find field to replace",
                                     "column name",
                                     value.tag(),
                                 ))
@@ -131,18 +124,13 @@ impl Str {
                         Err(reason) => return Err(reason),
                     };
 
-                    match value.item.replace_data_at_column_path(
-                        value.tag(),
-                        &f,
-                        replacement.item.clone(),
-                    ) {
+                    match value.replace_data_at_column_path(&f, replacement.item.clone()) {
                         Some(v) => return Ok(v),
-                        None => {
-                            return Err(ShellError::type_error(
-                                "column name",
-                                value.tagged_type_name(),
-                            ))
-                        }
+                        None => Err(ShellError::labeled_error(
+                            "str could not find field to replace",
+                            "column name",
+                            value.tag(),
+                        )),
                     }
                 }
                 None => Err(ShellError::untagged_runtime_error(format!(
@@ -153,7 +141,7 @@ impl Str {
             },
             _ => Err(ShellError::labeled_error(
                 "Unrecognized type in stream",
-                value.type_name(),
+                value.item.type_name(),
                 value.tag,
             )),
         }
@@ -185,32 +173,9 @@ impl Plugin for Str {
         }
 
         if let Some(possible_field) = args.nth(0) {
-            match possible_field {
-                Tagged {
-                    item: Value::Primitive(Primitive::String(s)),
-                    tag,
-                } => match self.action {
-                    Some(Action::Downcase)
-                    | Some(Action::Upcase)
-                    | Some(Action::ToInteger)
-                    | None => {
-                        self.for_field(vec![s.clone().tagged(tag)]);
-                    }
-                },
-                table @ Tagged {
-                    item: Value::Table(_),
-                    ..
-                } => {
-                    self.field = Some(table.as_column_path()?.item);
-                }
-                _ => {
-                    return Err(ShellError::labeled_error(
-                        "Unrecognized type in params",
-                        possible_field.type_name(),
-                        &possible_field.tag,
-                    ))
-                }
-            }
+            let possible_field = possible_field.as_column_path()?;
+
+            self.for_field(possible_field);
         }
 
         for param in args.positional_iter() {
@@ -249,8 +214,8 @@ mod tests {
     use super::{Action, Str};
     use indexmap::IndexMap;
     use nu::{
-        CallInfo, EvaluatedArgs, Plugin, Primitive, ReturnSuccess, Tag, Tagged, TaggedDictBuilder,
-        TaggedItem, Value,
+        CallInfo, EvaluatedArgs, Plugin, Primitive, RawPathMember, ReturnSuccess, Tag, Tagged,
+        TaggedDictBuilder, TaggedItem, Value,
     };
     use num_bigint::BigInt;
 
@@ -359,8 +324,11 @@ mod tests {
         assert_eq!(
             plugin
                 .field
-                .map(|f| f.into_iter().map(|f| f.item).collect()),
-            Some(vec!["package".to_string(), "description".to_string()])
+                .map(|f| f.iter().cloned().map(|f| f.item).collect()),
+            Some(vec![
+                RawPathMember::String("package".to_string()),
+                RawPathMember::String("description".to_string())
+            ])
         )
     }
 

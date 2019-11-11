@@ -1,8 +1,12 @@
+mod debug;
+mod property_get;
+pub(crate) mod shape;
+
 use crate::context::CommandRegistry;
 use crate::data::TaggedDictBuilder;
 use crate::errors::ShellError;
 use crate::evaluate::{evaluate_baseline_expr, Scope};
-use crate::parser::hir::path::{PathMember, RawPathMember};
+use crate::parser::hir::path::ColumnPath;
 use crate::parser::{hir, Operator};
 use crate::prelude::*;
 use crate::Text;
@@ -77,6 +81,7 @@ pub enum Primitive {
     Decimal(BigDecimal),
     Bytes(u64),
     String(String),
+    ColumnPath(ColumnPath),
     Pattern(String),
     Boolean(bool),
     Date(DateTime<Utc>),
@@ -87,6 +92,26 @@ pub enum Primitive {
     // Stream markers (used as bookend markers rather than actual values)
     BeginningOfStream,
     EndOfStream,
+}
+
+impl ShellTypeName for Primitive {
+    fn type_name(&self) -> &'static str {
+        match self {
+            Primitive::Nothing => "nothing",
+            Primitive::Int(_) => "integer",
+            Primitive::Decimal(_) => "decimal",
+            Primitive::Bytes(_) => "bytes",
+            Primitive::String(_) => "string",
+            Primitive::ColumnPath(_) => "column path",
+            Primitive::Pattern(_) => "pattern",
+            Primitive::Boolean(_) => "boolean",
+            Primitive::Date(_) => "date",
+            Primitive::Path(_) => "file path",
+            Primitive::Binary(_) => "binary",
+            Primitive::BeginningOfStream => "marker<beginning of stream>",
+            Primitive::EndOfStream => "marker<end of stream>",
+        }
+    }
 }
 
 impl From<BigDecimal> for Primitive {
@@ -102,45 +127,6 @@ impl From<f64> for Primitive {
 }
 
 impl Primitive {
-    pub(crate) fn type_name(&self) -> String {
-        use Primitive::*;
-
-        match self {
-            Nothing => "nothing",
-            BeginningOfStream => "beginning-of-stream",
-            EndOfStream => "end-of-stream",
-            Path(_) => "path",
-            Int(_) => "int",
-            Decimal(_) => "decimal",
-            Bytes(_) => "bytes",
-            Pattern(_) => "pattern",
-            String(_) => "string",
-            Boolean(_) => "boolean",
-            Date(_) => "date",
-            Binary(_) => "binary",
-        }
-        .to_string()
-    }
-
-    pub(crate) fn debug(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        use Primitive::*;
-
-        match self {
-            Nothing => write!(f, "Nothing"),
-            BeginningOfStream => write!(f, "BeginningOfStream"),
-            EndOfStream => write!(f, "EndOfStream"),
-            Int(int) => write!(f, "{}", int),
-            Path(path) => write!(f, "{}", path.display()),
-            Decimal(decimal) => write!(f, "{}", decimal),
-            Bytes(bytes) => write!(f, "{}", bytes),
-            Pattern(string) => write!(f, "{:?}", string),
-            String(string) => write!(f, "{:?}", string),
-            Boolean(boolean) => write!(f, "{}", boolean),
-            Date(date) => write!(f, "{}", date),
-            Binary(binary) => write!(f, "{:?}", binary),
-        }
-    }
-
     pub fn number(number: impl Into<Number>) -> Primitive {
         let number = number.into();
 
@@ -174,6 +160,24 @@ impl Primitive {
             Primitive::Decimal(decimal) => format!("{}", decimal),
             Primitive::Pattern(s) => format!("{}", s),
             Primitive::String(s) => format!("{}", s),
+            Primitive::ColumnPath(p) => {
+                let mut members = p.iter();
+                let mut f = String::new();
+
+                f.push_str(
+                    &members
+                        .next()
+                        .expect("BUG: column path with zero members")
+                        .to_string(),
+                );
+
+                for member in members {
+                    f.push_str(".");
+                    f.push_str(&member.to_string())
+                }
+
+                f
+            }
             Primitive::Boolean(b) => match (b, field_name) {
                 (true, None) => format!("Yes"),
                 (false, None) => format!("No"),
@@ -203,7 +207,7 @@ pub struct Operation {
     pub(crate) right: Value,
 }
 
-#[derive(Debug, Ord, PartialOrd, Eq, PartialEq, Clone, Serialize, Deserialize, new)]
+#[derive(Debug, Ord, PartialOrd, Eq, PartialEq, Clone, Hash, Serialize, Deserialize, new)]
 pub struct Block {
     pub(crate) expressions: Vec<hir::Expression>,
     pub(crate) source: Text,
@@ -253,6 +257,18 @@ pub enum Value {
     Block(Block),
 }
 
+impl ShellTypeName for Value {
+    fn type_name(&self) -> &'static str {
+        match self {
+            Value::Primitive(p) => p.type_name(),
+            Value::Row(_) => "row",
+            Value::Table(_) => "table",
+            Value::Error(_) => "error",
+            Value::Block(_) => "block",
+        }
+    }
+}
+
 impl Into<Value> for Number {
     fn into(self) -> Value {
         match self {
@@ -271,41 +287,16 @@ impl Into<Value> for &Number {
     }
 }
 
-pub fn debug_list(values: &Vec<Tagged<Value>>) -> ValuesDebug<'_> {
-    ValuesDebug { values }
-}
-
-pub struct ValuesDebug<'a> {
-    values: &'a Vec<Tagged<Value>>,
-}
-
-impl fmt::Debug for ValuesDebug<'_> {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        f.debug_list()
-            .entries(self.values.iter().map(|i| i.debug()))
-            .finish()
-    }
-}
-
-pub struct ValueDebug<'a> {
-    value: &'a Tagged<Value>,
-}
-
-impl fmt::Debug for ValueDebug<'_> {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match self.value.item() {
-            Value::Primitive(p) => p.debug(f),
-            Value::Row(o) => o.debug(f),
-            Value::Table(l) => debug_list(l).fmt(f),
-            Value::Block(_) => write!(f, "[[block]]"),
-            Value::Error(_) => write!(f, "[[error]]"),
-        }
-    }
-}
-
 impl Tagged<Value> {
     pub fn tagged_type_name(&self) -> Tagged<String> {
-        let name = self.type_name();
+        let name = self.type_name().to_string();
+        name.tagged(self.tag())
+    }
+}
+
+impl Tagged<&Value> {
+    pub fn tagged_type_name(&self) -> Tagged<String> {
+        let name = self.type_name().to_string();
         name.tagged(self.tag())
     }
 }
@@ -318,7 +309,7 @@ impl std::convert::TryFrom<&Tagged<Value>> for Block {
             Value::Block(block) => Ok(block.clone()),
             v => Err(ShellError::type_error(
                 "Block",
-                v.type_name().tagged(value.tag()),
+                v.type_name().spanned(value.span()),
             )),
         }
     }
@@ -334,7 +325,7 @@ impl std::convert::TryFrom<&Tagged<Value>> for i64 {
             }
             v => Err(ShellError::type_error(
                 "Integer",
-                v.type_name().tagged(value.tag()),
+                v.type_name().spanned(value.span()),
             )),
         }
     }
@@ -348,7 +339,7 @@ impl std::convert::TryFrom<&Tagged<Value>> for String {
             Value::Primitive(Primitive::String(s)) => Ok(s.clone()),
             v => Err(ShellError::type_error(
                 "String",
-                v.type_name().tagged(value.tag()),
+                v.type_name().spanned(value.span()),
             )),
         }
     }
@@ -362,7 +353,7 @@ impl std::convert::TryFrom<&Tagged<Value>> for Vec<u8> {
             Value::Primitive(Primitive::Binary(b)) => Ok(b.clone()),
             v => Err(ShellError::type_error(
                 "Binary",
-                v.type_name().tagged(value.tag()),
+                v.type_name().spanned(value.span()),
             )),
         }
     }
@@ -376,7 +367,7 @@ impl<'a> std::convert::TryFrom<&'a Tagged<Value>> for &'a crate::data::Dictionar
             Value::Row(d) => Ok(d),
             v => Err(ShellError::type_error(
                 "Dictionary",
-                v.type_name().tagged(value.tag()),
+                v.type_name().spanned(value.span()),
             )),
         }
     }
@@ -398,85 +389,14 @@ impl std::convert::TryFrom<Option<&Tagged<Value>>> for Switch {
                 Value::Primitive(Primitive::Boolean(true)) => Ok(Switch::Present),
                 v => Err(ShellError::type_error(
                     "Boolean",
-                    v.type_name().tagged(value.tag()),
+                    v.type_name().spanned(value.span()),
                 )),
             },
-        }
-    }
-}
-
-impl Tagged<Value> {
-    pub(crate) fn debug(&self) -> ValueDebug<'_> {
-        ValueDebug { value: self }
-    }
-
-    pub fn as_column_path(&self) -> Result<Tagged<Vec<PathMember>>, ShellError> {
-        let mut out: Vec<PathMember> = vec![];
-
-        match &self.item {
-            Value::Table(table) => {
-                for item in table {
-                    out.push(item.as_path_member()?);
-                }
-            }
-
-            other => {
-                return Err(ShellError::type_error(
-                    "column name",
-                    other.type_name().tagged(&self.tag),
-                ))
-            }
-        }
-
-        Ok(out.tagged(&self.tag))
-    }
-
-    pub(crate) fn as_path_member(&self) -> Result<PathMember, ShellError> {
-        match &self.item {
-            Value::Primitive(primitive) => match primitive {
-                Primitive::Int(int) => Ok(PathMember::int(int.clone(), self.tag.span)),
-                Primitive::String(string) => Ok(PathMember::string(string, self.tag.span)),
-                other => Err(ShellError::type_error(
-                    "path member",
-                    other.type_name().tagged(self.tag.span),
-                )),
-            },
-            other => Err(ShellError::type_error(
-                "path member",
-                other.type_name().tagged(self.tag.span),
-            )),
-        }
-    }
-
-    pub(crate) fn as_string(&self) -> Result<String, ShellError> {
-        match &self.item {
-            Value::Primitive(Primitive::String(s)) => Ok(s.clone()),
-            Value::Primitive(Primitive::Boolean(x)) => Ok(format!("{}", x)),
-            Value::Primitive(Primitive::Decimal(x)) => Ok(format!("{}", x)),
-            Value::Primitive(Primitive::Int(x)) => Ok(format!("{}", x)),
-            Value::Primitive(Primitive::Bytes(x)) => Ok(format!("{}", x)),
-            Value::Primitive(Primitive::Path(x)) => Ok(format!("{}", x.display())),
-            // TODO: this should definitely be more general with better errors
-            other => Err(ShellError::labeled_error(
-                "Expected string",
-                other.type_name(),
-                &self.tag,
-            )),
         }
     }
 }
 
 impl Value {
-    pub fn type_name(&self) -> String {
-        match self {
-            Value::Primitive(p) => p.type_name(),
-            Value::Row(_) => format!("row"),
-            Value::Table(_) => format!("table"),
-            Value::Block(_) => format!("block"),
-            Value::Error(_) => format!("error"),
-        }
-    }
-
     pub fn data_descriptors(&self) -> Vec<String> {
         match self {
             Value::Primitive(_) => vec![],
@@ -492,280 +412,6 @@ impl Value {
         }
     }
 
-    pub(crate) fn get_data_by_index(&self, idx: usize) -> Option<&Tagged<Value>> {
-        match self {
-            Value::Table(value_set) => value_set.get(idx),
-            _ => None,
-        }
-    }
-
-    pub(crate) fn get_mut_data_by_index(&mut self, idx: usize) -> Option<&mut Tagged<Value>> {
-        match self {
-            Value::Table(value_set) => value_set.get_mut(idx),
-            _ => None,
-        }
-    }
-
-    pub(crate) fn get_data_by_member(&self, name: &PathMember) -> Option<&Tagged<Value>> {
-        match self {
-            Value::Row(o) => match &name.item {
-                RawPathMember::String(string) => o.get_data_by_key(&string),
-                RawPathMember::Int(int) => None,
-            },
-            Value::Table(l) => match &name.item {
-                RawPathMember::String(string) => {
-                    for item in l {
-                        match item {
-                            Tagged {
-                                item: Value::Row(o),
-                                ..
-                            } => match o.get_data_by_key(&string) {
-                                Some(v) => return Some(v),
-                                None => {}
-                            },
-                            _ => {}
-                        }
-                    }
-                    None
-                }
-                RawPathMember::Int(int) => {
-                    let index = int.to_usize()?;
-                    self.get_data_by_index(index)
-                }
-            },
-            _ => None,
-        }
-    }
-
-    pub(crate) fn get_mut_data_by_member(
-        &mut self,
-        name: &PathMember,
-    ) -> Option<&mut Tagged<Value>> {
-        match self {
-            Value::Row(o) => match &name.item {
-                RawPathMember::String(string) => o.get_mut_data_by_key(&string),
-                RawPathMember::Int(int) => None,
-            },
-            Value::Table(l) => match &name.item {
-                RawPathMember::String(string) => {
-                    for item in l {
-                        match item {
-                            Tagged {
-                                item: Value::Row(o),
-                                ..
-                            } => match o.get_mut_data_by_key(&string) {
-                                Some(v) => return Some(v),
-                                None => {}
-                            },
-                            _ => {}
-                        }
-                    }
-                    None
-                }
-                RawPathMember::Int(int) => {
-                    let index = int.to_usize()?;
-                    l.get_mut(index)
-                }
-            },
-            _ => None,
-        }
-    }
-
-    pub(crate) fn get_data_by_key(&self, name: &str) -> Option<&Tagged<Value>> {
-        match self {
-            Value::Row(o) => o.get_data_by_key(name),
-            Value::Table(l) => {
-                for item in l {
-                    match item {
-                        Tagged {
-                            item: Value::Row(o),
-                            ..
-                        } => match o.get_data_by_key(name) {
-                            Some(v) => return Some(v),
-                            None => {}
-                        },
-                        _ => {}
-                    }
-                }
-                None
-            }
-            _ => None,
-        }
-    }
-
-    pub(crate) fn get_mut_data_by_key(&mut self, name: &str) -> Option<&mut Tagged<Value>> {
-        match self {
-            Value::Row(ref mut o) => o.get_mut_data_by_key(name),
-            Value::Table(ref mut l) => {
-                for item in l {
-                    match item {
-                        Tagged {
-                            item: Value::Row(ref mut o),
-                            ..
-                        } => match o.get_mut_data_by_key(name) {
-                            Some(v) => return Some(v),
-                            None => {}
-                        },
-                        _ => {}
-                    }
-                }
-                None
-            }
-            _ => None,
-        }
-    }
-
-    pub fn get_data_by_column_path(
-        &self,
-        tag: Tag,
-        path: &Vec<PathMember>,
-        callback: Box<dyn FnOnce((&Value, &PathMember)) -> ShellError>,
-    ) -> Result<Option<Tagged<&Value>>, ShellError> {
-        let mut current = self;
-        for p in path {
-            let value = self.get_data_by_member(p);
-
-            match value {
-                Some(v) => current = v,
-                None => return Err(callback((&current.clone(), &p.clone()))),
-            }
-        }
-
-        Ok(Some(current.tagged(tag)))
-    }
-
-    pub fn insert_data_at_path(
-        &self,
-        tag: Tag,
-        path: &str,
-        new_value: Value,
-    ) -> Option<Tagged<Value>> {
-        let mut new_obj = self.clone();
-
-        let split_path: Vec<_> = path.split(".").collect();
-
-        if let Value::Row(ref mut o) = new_obj {
-            let mut current = o;
-
-            if split_path.len() == 1 {
-                // Special case for inserting at the top level
-                current
-                    .entries
-                    .insert(path.to_string(), new_value.tagged(&tag));
-                return Some(new_obj.tagged(&tag));
-            }
-
-            for idx in 0..split_path.len() {
-                match current.entries.get_mut(split_path[idx]) {
-                    Some(next) => {
-                        if idx == (split_path.len() - 2) {
-                            match &mut next.item {
-                                Value::Row(o) => {
-                                    o.entries.insert(
-                                        split_path[idx + 1].to_string(),
-                                        new_value.tagged(&tag),
-                                    );
-                                }
-                                _ => {}
-                            }
-
-                            return Some(new_obj.tagged(&tag));
-                        } else {
-                            match next.item {
-                                Value::Row(ref mut o) => {
-                                    current = o;
-                                }
-                                _ => return None,
-                            }
-                        }
-                    }
-                    _ => return None,
-                }
-            }
-        }
-
-        None
-    }
-
-    pub fn insert_data_at_column_path(
-        &self,
-        tag: Tag,
-        split_path: &Vec<Tagged<PathMember>>,
-        new_value: Value,
-    ) -> Result<Tagged<Value>, ShellError> {
-        let mut new_obj = self.clone();
-
-        if let Value::Row(ref mut o) = new_obj {
-            let mut current = o;
-
-            if split_path.len() == 1 {
-                // Special case for inserting at the top level
-                current
-                    .entries
-                    .insert(split_path[0].item.clone(), new_value.tagged(&tag));
-                return Ok(new_obj.tagged(&tag));
-            }
-
-            for idx in 0..split_path.len() {
-                match current.entries.get_mut(&split_path[idx].item) {
-                    Some(next) => {
-                        if idx == (split_path.len() - 2) {
-                            match &mut next.item {
-                                Value::Row(o) => {
-                                    o.entries.insert(
-                                        split_path[idx + 1].to_string(),
-                                        new_value.tagged(&tag),
-                                    );
-                                }
-                                _ => {}
-                            }
-
-                            return Some(new_obj.tagged(&tag));
-                        } else {
-                            match next.item {
-                                Value::Row(ref mut o) => {
-                                    current = o;
-                                }
-                                _ => return None,
-                            }
-                        }
-                    }
-                    _ => return None,
-                }
-            }
-        }
-
-        None
-    }
-
-    pub fn replace_data_at_column_path(
-        &self,
-        tag: Tag,
-        split_path: &Vec<PathMember>,
-        replaced_value: Value,
-    ) -> Option<Tagged<Value>> {
-        let mut new_obj = self.clone();
-        let mut current = &mut new_obj;
-
-        for idx in 0..split_path.len() {
-            match current.get_mut_data_by_member(&split_path[idx]) {
-                Some(next) => {
-                    if idx == (split_path.len() - 1) {
-                        *next = replaced_value.tagged(&tag);
-                        return Some(new_obj.tagged(&tag));
-                    } else {
-                        current = &mut next.item;
-                    }
-                }
-                None => {
-                    return None;
-                }
-            }
-        }
-
-        None
-    }
-
     pub fn get_data(&self, desc: &String) -> MaybeOwned<'_, Value> {
         match self {
             p @ Value::Primitive(_) => MaybeOwned::Borrowed(p),
@@ -773,6 +419,34 @@ impl Value {
             Value::Block(_) => MaybeOwned::Owned(Value::nothing()),
             Value::Table(_) => MaybeOwned::Owned(Value::nothing()),
             Value::Error(_) => MaybeOwned::Owned(Value::nothing()),
+        }
+    }
+
+    pub(crate) fn format_type(&self) -> String {
+        match self {
+            Value::Primitive(p) => match p {
+                Primitive::Nothing => format!("[nothing]"),
+                Primitive::Int(_) => format!("[integer]"),
+                Primitive::Decimal(_) => format!("[decimal]"),
+                Primitive::Bytes(_) => format!("[byte size]"),
+                Primitive::String(_) => format!("[string]"),
+                Primitive::ColumnPath(_) => format!("[column path]"),
+                Primitive::Pattern(_) => format!("[pattern]"),
+                Primitive::Boolean(_) => format!("[boolean]"),
+                Primitive::Date(_) => format!("[date]"),
+                Primitive::Path(_) => format!("[file path]"),
+                Primitive::Binary(_) => format!("[binary]"),
+                Primitive::BeginningOfStream => format!("[marker: beginning]"),
+                Primitive::EndOfStream => format!("[marker: end]"),
+            },
+            Value::Block(_) => format!("[block]"),
+            Value::Row(row) => format!("[row: {}]", { row.keys().join(", ") }),
+            Value::Table(l) => format!(
+                "[table: {} {}]",
+                l.len(),
+                if l.len() == 1 { "row" } else { "rows" }
+            ),
+            Value::Error(_) => format!("[error]"),
         }
     }
 
@@ -806,7 +480,7 @@ impl Value {
         &self,
         operator: &Operator,
         other: &Value,
-    ) -> Result<bool, (String, String)> {
+    ) -> Result<bool, (&'static str, &'static str)> {
         match operator {
             _ => {
                 let coerced = coerce_compare(self, other)?;
@@ -852,6 +526,10 @@ impl Value {
         Value::Primitive(Primitive::String(s.into()))
     }
 
+    pub fn int(i: impl Into<BigInt>) -> Value {
+        Value::Primitive(Primitive::Int(i.into()))
+    }
+
     pub fn pattern(s: impl Into<String>) -> Value {
         Value::Primitive(Primitive::String(s.into()))
     }
@@ -862,10 +540,6 @@ impl Value {
 
     pub fn bytes(s: impl Into<u64>) -> Value {
         Value::Primitive(Primitive::Bytes(s.into()))
-    }
-
-    pub fn int(s: impl Into<BigInt>) -> Value {
-        Value::Primitive(Primitive::Int(s.into()))
     }
 
     pub fn decimal(s: impl Into<BigDecimal>) -> Value {
@@ -919,7 +593,7 @@ impl Tagged<Value> {
             Value::Primitive(Primitive::String(path_str)) => Ok(PathBuf::from(&path_str).clone()),
             other => Err(ShellError::type_error(
                 "Path",
-                other.type_name().tagged(self.tag()),
+                other.type_name().spanned(self.span()),
             )),
         }
     }
@@ -972,7 +646,10 @@ impl CompareValues {
     }
 }
 
-fn coerce_compare(left: &Value, right: &Value) -> Result<CompareValues, (String, String)> {
+fn coerce_compare(
+    left: &Value,
+    right: &Value,
+) -> Result<CompareValues, (&'static str, &'static str)> {
     match (left, right) {
         (Value::Primitive(left), Value::Primitive(right)) => coerce_compare_primitive(left, right),
 
@@ -983,7 +660,7 @@ fn coerce_compare(left: &Value, right: &Value) -> Result<CompareValues, (String,
 fn coerce_compare_primitive(
     left: &Primitive,
     right: &Primitive,
-) -> Result<CompareValues, (String, String)> {
+) -> Result<CompareValues, (&'static str, &'static str)> {
     use Primitive::*;
 
     Ok(match (left, right) {
@@ -1012,12 +689,18 @@ mod tests {
 
     use crate::data::meta::*;
     use crate::parser::hir::path::PathMember;
+    use crate::ColumnPath as ColumnPathValue;
     use crate::ShellError;
     use crate::Value;
     use indexmap::IndexMap;
+    use num_bigint::BigInt;
 
     fn string(input: impl Into<String>) -> Tagged<Value> {
         Value::string(input.into()).tagged_unknown()
+    }
+
+    fn int(input: impl Into<BigInt>) -> Tagged<Value> {
+        Value::int(input.into()).tagged_unknown()
     }
 
     fn row(entries: IndexMap<String, Tagged<Value>>) -> Tagged<Value> {
@@ -1028,11 +711,13 @@ mod tests {
         Value::table(list).tagged_unknown()
     }
 
-    fn error_callback() -> impl FnOnce((&Value, &PathMember)) -> ShellError {
-        move |(_obj_source, _column_path_tried)| ShellError::unimplemented("will never be called.")
+    fn error_callback(
+        reason: &'static str,
+    ) -> impl FnOnce((&Value, &PathMember, ShellError)) -> ShellError {
+        move |(_obj_source, _column_path_tried, _err)| ShellError::unimplemented(reason)
     }
 
-    fn column_path(paths: &Vec<Tagged<Value>>) -> Tagged<Vec<PathMember>> {
+    fn column_path(paths: &Vec<Tagged<Value>>) -> Tagged<ColumnPathValue> {
         table(&paths.iter().cloned().collect())
             .as_column_path()
             .unwrap()
@@ -1045,7 +730,7 @@ mod tests {
         });
 
         assert_eq!(
-            *row.get_data_by_key("amigos").unwrap(),
+            row.get_data_by_key("amigos".spanned_unknown()).unwrap(),
             table(&vec![
                 string("andres"),
                 string("jonathan"),
@@ -1069,8 +754,9 @@ mod tests {
         });
 
         assert_eq!(
-            **value
-                .get_data_by_column_path(tag, &field_path, Box::new(error_callback()))
+            *value
+                .tagged(tag)
+                .get_data_by_column_path(&field_path, Box::new(error_callback("package.version")))
                 .unwrap()
                 .unwrap(),
             version
@@ -1096,17 +782,25 @@ mod tests {
         });
 
         assert_eq!(
-            **value
-                .get_data_by_column_path(tag, &field_path, Box::new(error_callback()))
+            value
+                .tagged(tag)
+                .get_data_by_column_path(
+                    &field_path,
+                    Box::new(error_callback("package.authors.name"))
+                )
                 .unwrap()
                 .unwrap(),
-            name
+            table(&vec![
+                string("Andrés N. Robalino"),
+                string("Jonathan Turner"),
+                string("Yehuda Katz")
+            ])
         )
     }
 
     #[test]
     fn column_path_that_contains_just_a_number_gets_a_row_from_a_table() {
-        let field_path = column_path(&vec![string("package"), string("authors"), string("0")]);
+        let field_path = column_path(&vec![string("package"), string("authors"), int(0)]);
 
         let (_, tag) = string("Andrés N. Robalino").into_parts();
 
@@ -1123,8 +817,9 @@ mod tests {
         });
 
         assert_eq!(
-            **value
-                .get_data_by_column_path(tag, &field_path, Box::new(error_callback()))
+            *value
+                .tagged(tag)
+                .get_data_by_column_path(&field_path, Box::new(error_callback("package.authors.0")))
                 .unwrap()
                 .unwrap(),
             Value::row(indexmap! {
@@ -1152,8 +847,12 @@ mod tests {
         });
 
         assert_eq!(
-            **value
-                .get_data_by_column_path(tag, &field_path, Box::new(error_callback()))
+            *value
+                .tagged(tag)
+                .get_data_by_column_path(
+                    &field_path,
+                    Box::new(error_callback("package.authors.\"0\""))
+                )
                 .unwrap()
                 .unwrap(),
             Value::row(indexmap! {
@@ -1177,7 +876,8 @@ mod tests {
         let (replacement, tag) = string("jonas").into_parts();
 
         let actual = sample
-            .replace_data_at_column_path(tag, &field_path, replacement)
+            .tagged(tag)
+            .replace_data_at_column_path(&field_path, replacement)
             .unwrap();
 
         assert_eq!(actual, row(indexmap! {"amigos".into() => string("jonas")}));
@@ -1204,7 +904,8 @@ mod tests {
         let (replacement, tag) = table(&vec![string("yehuda::jonathan::andres")]).into_parts();
 
         let actual = sample
-            .replace_data_at_column_path(tag.clone(), &field_path, replacement.clone())
+            .tagged(tag.clone())
+            .replace_data_at_column_path(&field_path, replacement.clone())
             .unwrap();
 
         assert_eq!(
@@ -1255,7 +956,8 @@ mod tests {
         .into_parts();
 
         let actual = sample
-            .replace_data_at_column_path(tag.clone(), &field_path, replacement.clone())
+            .tagged(tag.clone())
+            .replace_data_at_column_path(&field_path, replacement.clone())
             .unwrap();
 
         assert_eq!(

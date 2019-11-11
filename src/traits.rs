@@ -1,6 +1,27 @@
 use crate::prelude::*;
 use derive_new::new;
+use getset::Getters;
 use std::fmt::{self, Write};
+
+pub trait ShellTypeName {
+    fn type_name(&self) -> &'static str;
+}
+
+impl<T: ShellTypeName> ShellTypeName for &T {
+    fn type_name(&self) -> &'static str {
+        (*self).type_name()
+    }
+}
+
+pub trait SpannedTypeName {
+    fn spanned_type_name(&self) -> Spanned<&'static str>;
+}
+
+impl<T: ShellTypeName> SpannedTypeName for Spanned<T> {
+    fn spanned_type_name(&self) -> Spanned<&'static str> {
+        self.item.type_name().spanned(self.span)
+    }
+}
 
 pub struct Debuggable<'a, T: FormatDebug> {
     inner: &'a T,
@@ -13,9 +34,22 @@ impl FormatDebug for str {
     }
 }
 
-impl<T: ToDebug> fmt::Display for Debuggable<'_, T> {
+impl<T: ToDebug> fmt::Debug for Debuggable<'_, T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.inner.fmt_debug(
+            &mut DebugFormatter::new(
+                f,
+                ansi_term::Color::White.bold(),
+                ansi_term::Color::Black.bold(),
+            ),
+            self.source,
+        )
+    }
+}
+
+impl<T: ToDebug> fmt::Display for Debuggable<'_, T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.inner.fmt_display(
             &mut DebugFormatter::new(
                 f,
                 ansi_term::Color::White.bold(),
@@ -30,14 +64,21 @@ pub trait HasTag {
     fn tag(&self) -> Tag;
 }
 
-#[derive(new)]
+#[derive(Getters, new)]
 pub struct DebugFormatter<'me, 'args> {
     formatter: &'me mut std::fmt::Formatter<'args>,
+    #[new(value = "pretty::Arena::new()")]
+    #[get = "pub"]
+    arena: pretty::Arena<'me, DebugDoc<'me>>,
     style: ansi_term::Style,
     default_style: ansi_term::Style,
 }
 
 impl<'me, 'args> DebugFormatter<'me, 'args> {
+    pub fn say_simple(&mut self, kind: &str) -> std::fmt::Result {
+        write!(self, "{}", self.style.paint(kind))
+    }
+
     pub fn say<'debuggable>(
         &mut self,
         kind: &str,
@@ -81,6 +122,8 @@ impl<'me, 'args> DebugFormatter<'me, 'args> {
         interleave: impl Fn(&mut Self) -> std::fmt::Result,
         close: impl Fn(&mut Self) -> std::fmt::Result,
     ) -> std::fmt::Result {
+        write!(self, "{}", self.style.paint(kind))?;
+        write!(self, "{}", self.default_style.paint(" "))?;
         open(self)?;
         write!(self, " ")?;
 
@@ -143,8 +186,21 @@ impl<'a, 'b> std::fmt::Write for DebugFormatter<'a, 'b> {
     }
 }
 
+pub struct ShellAnnotation {}
+
+pub type DebugDoc<'a> = pretty::RefDoc<'a, ShellAnnotation>;
+
+pub trait PrettyDebug {
+    fn pretty_debug<'arena>(&self, f: &'arena mut DebugFormatter, source: &str)
+        -> DebugDoc<'arena>;
+}
+
 pub trait FormatDebug: std::fmt::Debug {
     fn fmt_debug(&self, f: &mut DebugFormatter, source: &str) -> fmt::Result;
+
+    fn fmt_display(&self, f: &mut DebugFormatter, source: &str) -> fmt::Result {
+        self.fmt_debug(f, source)
+    }
 }
 
 pub trait ToDebug: Sized + FormatDebug {

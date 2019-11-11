@@ -2,14 +2,14 @@ use crate::parser::hir::path::PathMember;
 use crate::parser::hir::syntax_shape::{
     color_fallible_syntax, color_fallible_syntax_with, expand_atom, expand_expr, expand_syntax,
     parse_single_node, AnyExpressionShape, AtomicToken, BareShape, ExpandContext, ExpandExpression,
-    ExpandSyntax, ExpansionRule, FallibleColorSyntax, FlatShape, IntShape, ParseError, Peeked,
-    SkipSyntax, StringShape, TestSyntax, WhitespaceShape,
+    ExpandSyntax, ExpansionRule, FallibleColorSyntax, FlatShape, ParseError, Peeked, SkipSyntax,
+    StringShape, TestSyntax, WhitespaceShape,
 };
-use crate::parser::{hir, hir::Expression, hir::TokensIterator, Operator, RawToken};
+use crate::parser::{hir, hir::Expression, hir::TokensIterator, Operator, RawNumber, RawToken};
 use crate::prelude::*;
-use derive_new::new;
-use getset::Getters;
+use serde::Serialize;
 use std::fmt;
+use std::str::FromStr;
 
 #[derive(Debug, Copy, Clone)]
 pub struct VariablePathShape;
@@ -248,16 +248,10 @@ impl ExpandSyntax for PathTailShape {
         }
 
         match end {
-            None => {
-                return Err(ParseError::mismatch("path tail", {
-                    let typed_span = token_nodes.typed_span_at_cursor();
-
-                    Tagged {
-                        tag: typed_span.span.into(),
-                        item: typed_span.item,
-                    }
-                }))
-            }
+            None => Err(ParseError::mismatch(
+                "path tail",
+                token_nodes.typed_span_at_cursor(),
+            )),
 
             Some(end) => Ok(tail.spanned(end)),
         }
@@ -542,22 +536,32 @@ impl FallibleColorSyntax for VariableShape {
                 token_nodes.color_shape(FlatShape::ItVariable.spanned(atom.span));
                 Ok(())
             }
-            _ => Err(ParseError::mismatch("variable", atom.tagged_type_name()).into()),
+            _ => Err(ParseError::mismatch("variable", atom.type_name().spanned(atom.span)).into()),
         }
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize)]
 pub enum Member {
     String(/* outer */ Span, /* inner */ Span),
     Int(BigInt, Span),
     Bare(Span),
 }
 
+impl ShellTypeName for Member {
+    fn type_name(&self) -> &'static str {
+        match self {
+            Member::String(_, _) => "string",
+            Member::Int(_, _) => "integer",
+            Member::Bare(_) => "word",
+        }
+    }
+}
+
 impl Member {
     pub fn to_path_member(&self, source: &Text) -> PathMember {
         match self {
-            Member::String(outer, inner) => PathMember::string(inner.slice(source), *inner),
+            Member::String(outer, inner) => PathMember::string(inner.slice(source), *outer),
             Member::Int(int, span) => PathMember::int(int.clone(), *span),
             Member::Bare(span) => PathMember::string(span.slice(source), *span),
         }
@@ -567,9 +571,9 @@ impl Member {
 impl FormatDebug for Member {
     fn fmt_debug(&self, f: &mut DebugFormatter, source: &str) -> fmt::Result {
         match self {
-            Member::String(outer, _) => write!(f, "member ({})", outer.slice(source)),
-            Member::Int(_, int) => write!(f, "member ({})", int.slice(source)),
-            Member::Bare(bare) => write!(f, "member ({})", bare.slice(source)),
+            Member::String(outer, _) => write!(f, "{}", outer.slice(source)),
+            Member::Int(_, int) => write!(f, "{}", int.slice(source)),
+            Member::Bare(bare) => write!(f, "{}", bare.slice(source)),
         }
     }
 }
@@ -585,7 +589,7 @@ impl HasSpan for Member {
 }
 
 impl Member {
-    pub(crate) fn to_expr(&self) -> hir::Expression {
+    pub fn to_expr(&self) -> hir::Expression {
         match self {
             Member::String(outer, inner) => hir::Expression::string(*inner, *outer),
             Member::Int(number, span) => hir::Expression::number(number.clone(), *span),
@@ -598,17 +602,6 @@ impl Member {
             Member::String(outer, _inner) => *outer,
             Member::Int(_, span) => *span,
             Member::Bare(span) => *span,
-        }
-    }
-
-    pub(crate) fn tagged_type_name(&self) -> Tagged<&'static str> {
-        match self {
-            Member::String(outer, _inner) => "string".tagged(outer),
-            Member::Int(_, span) => "integer".tagged(span),
-            Member::Bare(span) => "word".tagged(Tag {
-                span: *span,
-                anchor: None,
-            }),
         }
     }
 }
@@ -626,10 +619,10 @@ impl ColumnPathState {
         match self {
             ColumnPathState::Initial => ColumnPathState::LeadingDot(dot),
             ColumnPathState::LeadingDot(_) => {
-                ColumnPathState::Error(ParseError::mismatch("column", "dot".tagged(dot)))
+                ColumnPathState::Error(ParseError::mismatch("column", "dot".spanned(dot)))
             }
             ColumnPathState::Dot(..) => {
-                ColumnPathState::Error(ParseError::mismatch("column", "dot".tagged(dot)))
+                ColumnPathState::Error(ParseError::mismatch("column", "dot".spanned(dot)))
             }
             ColumnPathState::Member(tag, members) => ColumnPathState::Dot(tag, members, dot),
             ColumnPathState::Error(err) => ColumnPathState::Error(err),
@@ -649,9 +642,10 @@ impl ColumnPathState {
                     tags
                 })
             }
-            ColumnPathState::Member(..) => {
-                ColumnPathState::Error(ParseError::mismatch("column", member.tagged_type_name()))
-            }
+            ColumnPathState::Member(..) => ColumnPathState::Error(ParseError::mismatch(
+                "column",
+                member.type_name().spanned(member.span()),
+            )),
             ColumnPathState::Error(err) => ColumnPathState::Error(err),
         }
     }
@@ -660,10 +654,10 @@ impl ColumnPathState {
         match self {
             ColumnPathState::Initial => Err(next.type_error("column path")),
             ColumnPathState::LeadingDot(dot) => {
-                Err(ParseError::mismatch("column", "dot".tagged(dot)))
+                Err(ParseError::mismatch("column", "dot".spanned(dot)))
             }
             ColumnPathState::Dot(_tag, _members, dot) => {
-                Err(ParseError::mismatch("column", "dot".tagged(dot)))
+                Err(ParseError::mismatch("column", "dot".spanned(dot)))
             }
             ColumnPathState::Member(tag, tags) => Ok(tags.tagged(tag)),
             ColumnPathState::Error(err) => Err(err),
@@ -678,14 +672,14 @@ pub fn expand_column_path<'a, 'b>(
     let mut state = ColumnPathState::Initial;
 
     loop {
-        let member = MemberShape.expand_syntax(token_nodes, context);
+        let member = expand_syntax(&MemberShape, token_nodes, context);
 
         match member {
             Err(_) => break,
             Ok(member) => state = state.member(member),
         }
 
-        let dot = DotShape.expand_syntax(token_nodes, context);
+        let dot = expand_syntax(&DotShape, token_nodes, context);
 
         match dot {
             Err(_) => break,
@@ -806,26 +800,8 @@ impl FormatDebug for Tagged<Vec<Member>> {
     }
 }
 
-#[derive(Debug, Clone, Getters, new)]
-pub struct ColumnPath {
-    #[get = "pub"]
-    path: Tagged<Vec<Member>>,
-}
-
-impl HasSpan for ColumnPath {
-    fn span(&self) -> Span {
-        self.path.tag.span
-    }
-}
-
-impl FormatDebug for ColumnPath {
-    fn fmt_debug(&self, f: &mut DebugFormatter, source: &str) -> fmt::Result {
-        f.say("column path", self.path.item.debug(source))
-    }
-}
-
 impl ExpandSyntax for ColumnPathShape {
-    type Output = ColumnPath;
+    type Output = Tagged<Vec<Member>>;
 
     fn name(&self) -> &'static str {
         "column path"
@@ -836,7 +812,7 @@ impl ExpandSyntax for ColumnPathShape {
         token_nodes: &'b mut TokensIterator<'a>,
         context: &ExpandContext,
     ) -> Result<Self::Output, ParseError> {
-        Ok(ColumnPath::new(expand_column_path(token_nodes, context)?))
+        Ok(expand_column_path(token_nodes, context)?)
     }
 }
 
@@ -911,6 +887,55 @@ impl FallibleColorSyntax for MemberShape {
     }
 }
 
+#[derive(Debug, Copy, Clone)]
+struct IntMemberShape;
+
+impl ExpandSyntax for IntMemberShape {
+    type Output = Member;
+
+    fn name(&self) -> &'static str {
+        "integer member"
+    }
+
+    fn expand_syntax<'a, 'b>(
+        &self,
+        token_nodes: &'b mut TokensIterator<'a>,
+        context: &ExpandContext,
+    ) -> Result<Self::Output, ParseError> {
+        token_nodes.atomic_parse(|token_nodes| {
+            let next = expand_atom(
+                token_nodes,
+                "integer member",
+                context,
+                ExpansionRule::new().separate_members(),
+            )?;
+
+            match next.item {
+                AtomicToken::Number {
+                    number: RawNumber::Int(int),
+                } => Ok(Member::Int(
+                    BigInt::from_str(int.slice(context.source)).unwrap(),
+                    int,
+                )),
+
+                AtomicToken::Word { text } => {
+                    let int = BigInt::from_str(text.slice(context.source));
+
+                    match int {
+                        Ok(int) => return Ok(Member::Int(int, text)),
+                        Err(_) => Err(ParseError::mismatch("integer member", "word".spanned(text))),
+                    }
+                }
+
+                other => Err(ParseError::mismatch(
+                    "integer member",
+                    other.type_name().spanned(next.span),
+                )),
+            }
+        })
+    }
+}
+
 impl ExpandSyntax for MemberShape {
     type Output = Member;
 
@@ -923,6 +948,10 @@ impl ExpandSyntax for MemberShape {
         token_nodes: &mut TokensIterator<'_>,
         context: &ExpandContext,
     ) -> Result<Member, ParseError> {
+        if let Ok(int) = expand_syntax(&IntMemberShape, token_nodes, context) {
+            return Ok(int);
+        }
+
         let bare = BareShape.test(token_nodes, context);
         if let Some(peeked) = bare {
             let node = peeked.not_eof("column")?.commit();
@@ -937,8 +966,6 @@ impl ExpandSyntax for MemberShape {
 
             return Ok(Member::String(outer, inner));
         }
-
-        if let Ok(int) = expand_syntax(&IntShape, token_nodes, context) {}
 
         Err(token_nodes.peek_any().type_error("column"))
     }
@@ -1000,7 +1027,10 @@ impl FallibleColorSyntax for ColorableDotShape {
                 Ok(())
             }
 
-            other => Err(ShellError::type_error("dot", other.tagged_type_name())),
+            other => Err(ShellError::type_error(
+                "dot",
+                other.type_name().spanned(other.span()),
+            )),
         }
     }
 }
@@ -1035,7 +1065,7 @@ impl ExpandSyntax for DotShape {
                 _ => {
                     return Err(ParseError::mismatch(
                         "dot",
-                        token.type_name().tagged(token_span),
+                        token.type_name().spanned(token_span),
                     ))
                 }
             })
@@ -1123,7 +1153,7 @@ impl FallibleColorSyntax for InfixShape {
                     // Otherwise, it's not a match
                     _ => Err(ParseError::mismatch(
                         "infix operator",
-                        token.type_name().tagged(token_span),
+                        token.type_name().spanned(token_span),
                     )),
                 }
             },

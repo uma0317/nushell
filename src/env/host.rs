@@ -53,15 +53,15 @@ impl Host for BasicHost {
 
     fn stdout(&mut self, out: &str) {
         match out {
-            "\n" => println!(""),
-            other => println!("{}", other),
+            "\n" => outln!(""),
+            other => outln!("{}", other),
         }
     }
 
     fn stderr(&mut self, out: &str) {
         match out {
-            "\n" => eprintln!(""),
-            other => eprintln!("{}", other),
+            "\n" => errln!(""),
+            other => errln!("{}", other),
         }
     }
 

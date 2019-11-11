@@ -381,7 +381,7 @@ impl FallibleColorSyntax for ShorthandHeadShape {
         shapes: &mut Vec<Spanned<FlatShape>>,
     ) -> Result<(), ShellError> {
         // A shorthand path must not be at EOF
-        let peeked = token_nodes.peek_non_ws().not_eof("shorthand path")?;
+        let peeked = token_nodes.peek_non_ws().not_eof("shorthand path head")?;
 
         match peeked.node {
             // If the head of a shorthand path is a bare token, it expands to `$it.bare`
@@ -426,7 +426,7 @@ impl FallibleColorSyntax for ShorthandHeadShape {
         shapes: &mut Vec<Spanned<FlatShape>>,
     ) -> Result<(), ShellError> {
         // A shorthand path must not be at EOF
-        let peeked = token_nodes.peek_non_ws().not_eof("shorthand path")?;
+        let peeked = token_nodes.peek_non_ws().not_eof("shorthand path head")?;
 
         match peeked.node {
             // If the head of a shorthand path is a bare token, it expands to `$it.bare`

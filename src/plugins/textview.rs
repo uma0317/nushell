@@ -15,6 +15,7 @@ enum DrawCommand {
     DrawString(Style, String),
     NextLine,
 }
+
 struct TextView;
 
 impl TextView {

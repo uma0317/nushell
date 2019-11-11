@@ -69,8 +69,6 @@ fn test_parse_command() {
             let bare = tokens[0].expect_bare();
             let pat = tokens[2].expect_pattern();
 
-            eprintln!("{:?} {:?} {:?}", bare, pat, bare.until(pat));
-
             ClassifiedCommand::Internal(InternalCommand::new(
                 "ls".to_string(),
                 Tag {

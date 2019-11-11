@@ -1,32 +1,35 @@
 use crate::data::meta::Tagged;
 use crate::data::Value;
 use crate::errors::ShellError;
+use crate::{PathMember, RawPathMember};
 use std::fmt;
 use std::ops::Div;
 use std::path::{Component, Path, PathBuf};
 
-pub fn did_you_mean(
-    obj_source: &Value,
-    field_tried: &Tagged<String>,
-) -> Option<Vec<(usize, String)>> {
-    let possibilities = obj_source.data_descriptors();
+pub fn did_you_mean(obj_source: &Value, field_tried: &PathMember) -> Option<Vec<(usize, String)>> {
+    match &field_tried.item {
+        RawPathMember::String(field_tried) => {
+            let possibilities = obj_source.data_descriptors();
 
-    let mut possible_matches: Vec<_> = possibilities
-        .into_iter()
-        .map(|x| {
-            let word = x.clone();
-            let distance = natural::distance::levenshtein_distance(&word, &field_tried);
+            let mut possible_matches: Vec<_> = possibilities
+                .into_iter()
+                .map(|x| {
+                    let word = x.clone();
+                    let distance = natural::distance::levenshtein_distance(&word, &field_tried);
 
-            (distance, word)
-        })
-        .collect();
+                    (distance, word)
+                })
+                .collect();
 
-    if possible_matches.len() > 0 {
-        possible_matches.sort();
-        return Some(possible_matches);
+            if possible_matches.len() > 0 {
+                possible_matches.sort();
+                return Some(possible_matches);
+            }
+
+            None
+        }
+        RawPathMember::Int(_) => None,
     }
-
-    None
 }
 
 pub struct AbsoluteFile {

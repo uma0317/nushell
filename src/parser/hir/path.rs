@@ -13,6 +13,34 @@ pub enum RawPathMember {
 
 pub type PathMember = Spanned<RawPathMember>;
 
+#[derive(Debug, Serialize, Deserialize, Ord, PartialOrd, Eq, PartialEq, Getters, Clone, new)]
+pub struct ColumnPath {
+    #[get = "pub"]
+    members: Vec<PathMember>,
+}
+
+impl ColumnPath {
+    pub fn iter(&self) -> impl Iterator<Item = &PathMember> {
+        self.members.iter()
+    }
+}
+
+impl FormatDebug for ColumnPath {
+    fn fmt_debug(&self, f: &mut DebugFormatter, source: &str) -> fmt::Result {
+        self.members.fmt_debug(f, source)
+    }
+}
+
+impl HasFallibleSpan for ColumnPath {
+    fn maybe_span(&self) -> Option<Span> {
+        if self.members.len() == 0 {
+            None
+        } else {
+            Some(span_for_spanned_list(self.members.iter().map(|m| m.span)))
+        }
+    }
+}
+
 impl fmt::Display for RawPathMember {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -33,7 +61,7 @@ impl PathMember {
 }
 
 impl FormatDebug for PathMember {
-    fn fmt_debug(&self, f: &mut DebugFormatter, source: &str) -> fmt::Result {
+    fn fmt_debug(&self, f: &mut DebugFormatter, _source: &str) -> fmt::Result {
         match &self.item {
             RawPathMember::String(string) => f.say_str("member", &string),
             RawPathMember::Int(int) => f.say_block("member", |f| write!(f, "{}", int)),

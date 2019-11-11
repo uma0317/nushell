@@ -68,7 +68,7 @@ fn supports_fetching_rows_from_tables_using_columns_named_as_numbers() {
             cwd: dirs.test(), h::pipeline(
             r#"
                 open sample.toml
-                | get package.1
+                | get package."1"
                 | echo $it
             "#
         ));
@@ -95,7 +95,7 @@ fn can_fetch_tables_or_rows_using_numbers_in_column_path() {
             cwd: dirs.test(), h::pipeline(
             r#"
                 open sample.toml
-                | get package.2.1
+                | get package."2".1
                 | echo $it
             "#
         ));

@@ -1,6 +1,6 @@
 use crate::data::base::Block;
 use crate::errors::ArgumentError;
-use crate::parser::hir::path::RawPathMember;
+use crate::parser::hir::path::{ColumnPath, RawPathMember};
 use crate::parser::{
     hir::{self, Expression, RawExpression},
     CommandRegistry, Text,
@@ -57,9 +57,8 @@ pub(crate) fn evaluate_baseline_expr(
     match &expr.item {
         RawExpression::Literal(literal) => Ok(evaluate_literal(literal.tagged(tag), source)),
         RawExpression::ExternalWord => Err(ShellError::argument_error(
-            "Invalid external word",
+            "Invalid external word".spanned(tag.span),
             ArgumentError::InvalidExternalWord,
-            tag,
         )),
         RawExpression::FilePath(path) => Ok(Value::path(path.clone()).tagged(tag)),
         RawExpression::Synthetic(hir::Synthetic::String(s)) => {
@@ -77,14 +76,8 @@ pub(crate) fn evaluate_baseline_expr(
             match left.compare(binary.op(), &*right) {
                 Ok(result) => Ok(Value::boolean(result).tagged(tag)),
                 Err((left_type, right_type)) => Err(ShellError::coerce_error(
-                    left_type.tagged(Tag {
-                        span: binary.left().span,
-                        anchor: None,
-                    }),
-                    right_type.tagged(Tag {
-                        span: binary.right().span,
-                        anchor: None,
-                    }),
+                    left_type.spanned(binary.left().span),
+                    right_type.spanned(binary.right().span),
                 )),
             }
         }
@@ -109,7 +102,7 @@ pub(crate) fn evaluate_baseline_expr(
                 let next = item.get_data_by_member(member);
 
                 match next {
-                    None => {
+                    Err(err) => {
                         let possibilities = item.data_descriptors();
 
                         if let RawPathMember::String(name) = &member.item {
@@ -127,15 +120,11 @@ pub(crate) fn evaluate_baseline_expr(
                                     &tag,
                                 ));
                             } else {
-                                return Err(ShellError::labeled_error(
-                                    "Unknown column",
-                                    "row does not have this column",
-                                    &tag,
-                                ));
+                                return Err(err);
                             }
                         }
                     }
-                    Some(next) => {
+                    Ok(next) => {
                         item = next.clone().item.tagged(&tag);
                     }
                 };
@@ -149,6 +138,14 @@ pub(crate) fn evaluate_baseline_expr(
 
 fn evaluate_literal(literal: Tagged<&hir::Literal>, source: &Text) -> Tagged<Value> {
     let result = match literal.item {
+        hir::Literal::ColumnPath(path) => {
+            let members = path
+                .iter()
+                .map(|member| member.to_path_member(source))
+                .collect();
+
+            Value::Primitive(Primitive::ColumnPath(ColumnPath::new(members)))
+        }
         hir::Literal::Number(int) => int.into(),
         hir::Literal::Size(int, unit) => unit.compute(int),
         hir::Literal::String(tag) => Value::string(tag.slice(source)),
@@ -207,10 +204,12 @@ fn evaluate_external(
     _source: &Text,
 ) -> Result<Tagged<Value>, ShellError> {
     Err(ShellError::syntax_error(
-        "Unexpected external command".tagged(*external.name()),
+        "Unexpected external command".spanned(*external.name()),
     ))
 }
 
 fn evaluate_command(tag: Tag, _scope: &Scope, _source: &Text) -> Result<Tagged<Value>, ShellError> {
-    Err(ShellError::syntax_error("Unexpected command".tagged(tag)))
+    Err(ShellError::syntax_error(
+        "Unexpected command".spanned(tag.span),
+    ))
 }

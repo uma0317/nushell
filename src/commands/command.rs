@@ -396,16 +396,16 @@ pub enum CommandAction {
 }
 
 impl FormatDebug for CommandAction {
-    fn fmt_debug(&self, f: &mut DebugFormatter, _source: &str) -> fmt::Result {
+    fn fmt_debug(&self, f: &mut DebugFormatter, source: &str) -> fmt::Result {
         match self {
             CommandAction::ChangePath(s) => write!(f, "action:change-path={}", s),
             CommandAction::Exit => write!(f, "action:exit"),
             CommandAction::EnterShell(s) => write!(f, "action:enter-shell={}", s),
             CommandAction::EnterValueShell(t) => {
-                write!(f, "action:enter-value-shell={:?}", t.debug())
+                write!(f, "action:enter-value-shell={}", t.debug(source))
             }
             CommandAction::EnterHelpShell(t) => {
-                write!(f, "action:enter-help-shell={:?}", t.debug())
+                write!(f, "action:enter-help-shell={}", t.debug(source))
             }
             CommandAction::PreviousShell => write!(f, "action:previous-shell"),
             CommandAction::NextShell => write!(f, "action:next-shell"),
@@ -417,6 +417,8 @@ impl FormatDebug for CommandAction {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ReturnSuccess {
     Value(Tagged<Value>),
+    DebugValue(Tagged<Value>),
+    SoftError(ShellError),
     Action(CommandAction),
 }
 
@@ -426,7 +428,9 @@ impl FormatDebug for ReturnValue {
     fn fmt_debug(&self, f: &mut DebugFormatter, source: &str) -> fmt::Result {
         match self {
             Err(err) => write!(f, "{}", err.debug(source)),
-            Ok(ReturnSuccess::Value(v)) => write!(f, "{:?}", v.debug()),
+            Ok(ReturnSuccess::Value(v)) => write!(f, "{}", v.debug(source)),
+            Ok(ReturnSuccess::DebugValue(v)) => v.fmt_debug(f, source),
+            Ok(ReturnSuccess::SoftError(e)) => write!(f, "{:?}", e),
             Ok(ReturnSuccess::Action(a)) => write!(f, "{}", a.debug(source)),
         }
     }
@@ -445,6 +449,14 @@ impl ReturnSuccess {
 
     pub fn value(input: impl Into<Tagged<Value>>) -> ReturnValue {
         Ok(ReturnSuccess::Value(input.into()))
+    }
+
+    pub fn debug_value(input: impl Into<Tagged<Value>>) -> ReturnValue {
+        Ok(ReturnSuccess::DebugValue(input.into()))
+    }
+
+    pub fn soft_error(error: ShellError) -> ReturnValue {
+        Ok(ReturnSuccess::SoftError(error))
     }
 
     pub fn action(input: CommandAction) -> ReturnValue {

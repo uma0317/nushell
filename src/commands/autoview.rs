@@ -120,14 +120,14 @@ pub fn autoview(
                                         let result = text.run(raw.with_input(stream.into()), &context.commands, false);
                                         result.collect::<Vec<_>>().await;
                                     } else {
-                                        println!("{}", s);
+                                        outln!("{}", s);
                                     }
                                 }
                                 Tagged {
                                     item: Value::Primitive(Primitive::String(s)),
                                     ..
                                 } => {
-                                    println!("{}", s);
+                                    outln!("{}", s);
                                 }
 
                                 Tagged { item: Value::Primitive(Primitive::Binary(ref b)), .. } => {
@@ -138,7 +138,7 @@ pub fn autoview(
                                         result.collect::<Vec<_>>().await;
                                     } else {
                                         use pretty_hex::*;
-                                        println!("{:?}", b.hex_dump());
+                                        outln!("{:?}", b.hex_dump());
                                     }
                                 }
 
@@ -152,7 +152,7 @@ pub fn autoview(
                                         let result = table.run(raw.with_input(stream.into()), &context.commands, false);
                                         result.collect::<Vec<_>>().await;
                                     } else {
-                                        println!("{:?}", item);
+                                        outln!("{:?}", item);
                                     }
                                 }
                             }
@@ -161,7 +161,7 @@ pub fn autoview(
                 }
             }
             _ => {
-                //println!("<no results>");
+                //outln!("<no results>");
             }
         }
 

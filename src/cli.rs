@@ -123,7 +123,7 @@ fn search_paths() -> Vec<std::path::PathBuf> {
         Some(paths) => {
             search_paths = env::split_paths(&paths).collect::<Vec<_>>();
         }
-        None => println!("PATH is not defined in the environment."),
+        None => outln!("PATH is not defined in the environment."),
     }
 
     #[cfg(debug_assertions)]
@@ -257,7 +257,7 @@ pub async fn cli() -> Result<(), Box<dyn Error>> {
             whole_stream_command(Nth),
             whole_stream_command(Next),
             whole_stream_command(Previous),
-            whole_stream_command(Debug),
+            // whole_stream_command(Debug),
             whole_stream_command(Shells),
             whole_stream_command(SplitColumn),
             whole_stream_command(SplitRow),
@@ -319,7 +319,9 @@ pub async fn cli() -> Result<(), Box<dyn Error>> {
             whole_stream_command(Save),
             whole_stream_command(Table),
             whole_stream_command(Version),
+            whole_stream_command(What),
             whole_stream_command(Which),
+            whole_stream_command(DebugValue),
         ]);
 
         #[cfg(feature = "clipboard")]
@@ -396,7 +398,7 @@ pub async fn cli() -> Result<(), Box<dyn Error>> {
                 let selection = interactive_fuzzy_search(&lines, 5); // Clears last line with prompt
                 match selection {
                     SelectionResult::Selected(line) => {
-                        println!("{}{}", &prompt, &line); // TODO: colorize prompt
+                        outln!("{}{}", &prompt, &line); // TODO: colorize prompt
                         readline = Ok(line.clone());
                         initial_command = None;
                     }
@@ -667,7 +669,7 @@ async fn process_line(readline: Result<String, ReadlineError>, ctx: &mut Context
         Err(ReadlineError::Interrupted) => LineResult::CtrlC,
         Err(ReadlineError::Eof) => LineResult::Break,
         Err(err) => {
-            println!("Error: {:?}", err);
+            outln!("Error: {:?}", err);
             LineResult::Break
         }
     }
@@ -689,9 +691,9 @@ fn classify_pipeline(
     .map_err(|err| err.into());
 
     if log_enabled!(target: "nu::expand_syntax", log::Level::Debug) {
-        println!("");
+        outln!("");
         ptree::print_tree(&iterator.expand_tracer().print(source.clone())).unwrap();
-        println!("");
+        outln!("");
     }
 
     result

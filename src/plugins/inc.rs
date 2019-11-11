@@ -1,6 +1,7 @@
 use nu::{
-    did_you_mean, serve_plugin, tag_for_tagged_list, CallInfo, Plugin, Primitive, ReturnSuccess,
-    ReturnValue, ShellError, Signature, SyntaxShape, Tagged, TaggedItem, Value,
+    did_you_mean, serve_plugin, span_for_spanned_list, CallInfo, ColumnPath, Plugin, Primitive,
+    ReturnSuccess, ReturnValue, ShellError, ShellTypeName, Signature, SpannedItem, SyntaxShape,
+    Tagged, TaggedItem, Value,
 };
 
 enum Action {
@@ -14,10 +15,8 @@ pub enum SemVerAction {
     Patch,
 }
 
-pub type ColumnPath = Vec<Tagged<String>>;
-
 struct Inc {
-    field: Option<ColumnPath>,
+    field: Option<Tagged<ColumnPath>>,
     error: Option<String>,
     action: Option<Action>,
 }
@@ -89,7 +88,7 @@ impl Inc {
                 } else {
                     return Err(ShellError::type_error(
                         "incrementable value",
-                        value.tagged_type_name(),
+                        value.type_name().spanned(value.span()),
                     ));
                 }
             }
@@ -98,23 +97,22 @@ impl Inc {
                 Some(ref f) => {
                     let fields = f.clone();
 
-                    let replace_for = value.item.get_data_by_column_path(
-                        value.tag(),
+                    let replace_for = value.get_data_by_column_path(
                         &f,
-                        Box::new(move |(obj_source, column_path_tried)| {
+                        Box::new(move |(obj_source, column_path_tried, _)| {
                             match did_you_mean(&obj_source, &column_path_tried) {
                                 Some(suggestions) => {
                                     return ShellError::labeled_error(
                                         "Unknown column",
                                         format!("did you mean '{}'?", suggestions[0].1),
-                                        tag_for_tagged_list(fields.iter().map(|p| p.tag())),
+                                        span_for_spanned_list(fields.iter().map(|p| p.span)),
                                     )
                                 }
                                 None => {
                                     return ShellError::labeled_error(
                                         "Unknown column",
                                         "row does not contain this column",
-                                        tag_for_tagged_list(fields.iter().map(|p| p.tag())),
+                                        span_for_spanned_list(fields.iter().map(|p| p.span)),
                                     )
                                 }
                             }
@@ -135,11 +133,7 @@ impl Inc {
                         Err(reason) => return Err(reason),
                     };
 
-                    match value.item.replace_data_at_column_path(
-                        value.tag(),
-                        &f,
-                        replacement.item.clone(),
-                    ) {
+                    match value.replace_data_at_column_path(&f, replacement.item.clone()) {
                         Some(v) => return Ok(v),
                         None => {
                             return Err(ShellError::labeled_error(
@@ -156,7 +150,7 @@ impl Inc {
             },
             _ => Err(ShellError::type_error(
                 "incrementable value",
-                value.tagged_type_name(),
+                value.type_name().spanned(value.span()),
             )),
         }
     }
@@ -191,9 +185,14 @@ impl Plugin for Inc {
                         item: Value::Table(_),
                         ..
                     } => {
-                        self.field = Some(table.as_column_path()?.item().to_vec());
+                        self.field = Some(table.as_column_path()?);
                     }
-                    value => return Err(ShellError::type_error("table", value.tagged_type_name())),
+                    value => {
+                        return Err(ShellError::type_error(
+                            "table",
+                            value.type_name().spanned(value.span()),
+                        ))
+                    }
                 }
             }
         }
@@ -229,8 +228,8 @@ mod tests {
     use super::{Inc, SemVerAction};
     use indexmap::IndexMap;
     use nu::{
-        CallInfo, EvaluatedArgs, Plugin, ReturnSuccess, Tag, Tagged, TaggedDictBuilder, TaggedItem,
-        Value,
+        CallInfo, EvaluatedArgs, Plugin, RawPathMember, ReturnSuccess, Tag, Tagged,
+        TaggedDictBuilder, TaggedItem, Value,
     };
 
     struct CallStub {
@@ -347,7 +346,10 @@ mod tests {
             plugin
                 .field
                 .map(|f| f.iter().map(|f| f.item.clone()).collect()),
-            Some(vec!["package".to_string(), "version".to_string()])
+            Some(vec![
+                RawPathMember::String("package".to_string()),
+                RawPathMember::String("version".to_string())
+            ])
         );
     }
 

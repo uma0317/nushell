@@ -53,6 +53,13 @@ pub struct Tagged<T> {
     pub item: T,
 }
 
+impl Tagged<String> {
+    pub fn borrow_spanned(&self) -> Spanned<&str> {
+        let span = self.tag.span;
+        self.item[..].spanned(span)
+    }
+}
+
 impl<T> HasTag for Tagged<T> {
     fn tag(&self) -> Tag {
         self.tag.clone()
@@ -103,6 +110,13 @@ impl<T> Tagged<T> {
 
         let mapped = input(self.item);
         mapped.tagged(tag)
+    }
+
+    pub fn transpose(&self) -> Tagged<&T> {
+        Tagged {
+            item: &self.item,
+            tag: self.tag.clone(),
+        }
     }
 
     pub fn tag(&self) -> Tag {

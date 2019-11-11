@@ -167,7 +167,7 @@ fn paint_selection_list(lines: &Vec<Match>, selected: usize) {
         for _ in line.text.len()..width {
             ansi_strings.push(style.paint(' '.to_string()));
         }
-        println!("{}", ANSIStrings(&ansi_strings));
+        outln!("{}", ANSIStrings(&ansi_strings));
     }
     let _ = cursor.goto(0, y + (lines.len() as u16));
     print!(

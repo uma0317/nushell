@@ -166,8 +166,7 @@ impl InternalCommand {
             trace!(target: "nu::run::internal", "{}", self.args.debug(&source));
         }
 
-        let objects: InputStream =
-            trace_stream!(target: "nu::trace_stream::internal", "input" = input.objects);
+        let objects: InputStream = trace_stream!(target: "nu::trace_stream::internal", source: source, "input" = input.objects);
 
         let command = context.expect_command(&self.name);
 
@@ -182,11 +181,14 @@ impl InternalCommand {
             )
         };
 
-        let result = trace_out_stream!(target: "nu::trace_stream::internal", source: &source, "output" = result);
+        let result = trace_out_stream!(target: "nu::trace_stream::internal", source: source, "output" = result);
         let mut result = result.values;
         let mut context = context.clone();
 
         let stream = async_stream! {
+            let mut soft_errs: Vec<ShellError> = vec![];
+            let mut yielded = false;
+
             while let Some(item) = result.next().await {
                 match item {
                     Ok(ReturnSuccess::Action(action)) => match action {
@@ -239,13 +241,31 @@ impl InternalCommand {
                     },
 
                     Ok(ReturnSuccess::Value(v)) => {
+                        yielded = true;
                         yield Ok(v);
+                    }
+
+                    Ok(ReturnSuccess::DebugValue(v)) => {
+                        yielded = true;
+                        let value = format!("{}", v.debug(&source));
+                        yield Ok(Value::string(value).tagged_unknown())
+                    }
+
+                    Ok(ReturnSuccess::SoftError(e)) => {
+                        soft_errs.push(e);
+                        yield Ok(Value::nothing().tagged_unknown());
                     }
 
                     Err(x) => {
                         yield Ok(Value::Error(x).tagged_unknown());
                         break;
                     }
+                }
+            }
+
+            if yielded == false && soft_errs.len() > 0 {
+                for item in soft_errs {
+                    yield Ok(Value::Error(item).tagged_unknown())
                 }
             }
         };

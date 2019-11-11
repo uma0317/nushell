@@ -47,7 +47,7 @@ fn view_binary(
                 }
                 #[cfg(not(feature = "rawkey"))]
                 {
-                    println!("Interactive binary viewing currently requires the 'rawkey' feature");
+                    outln!("Interactive binary viewing currently requires the 'rawkey' feature");
                     return Ok(());
                 }
             }
@@ -117,7 +117,7 @@ impl RenderContext {
                 );
             }
         }
-        println!("{}", Attribute::Reset);
+        outln!("{}", Attribute::Reset);
         Ok(())
     }
     fn render_to_screen_hires(&mut self) -> Result<(), Box<dyn std::error::Error>> {
@@ -174,7 +174,7 @@ impl RenderContext {
                 _ => {}
             }
         }
-        println!("{}", Attribute::Reset);
+        outln!("{}", Attribute::Reset);
         Ok(())
     }
     pub fn flush(&mut self) -> Result<(), Box<dyn std::error::Error>> {
@@ -264,7 +264,7 @@ pub fn view_contents(
 
     if raw_image_buffer.is_none() {
         //Not yet supported
-        println!("{:?}", buffer.hex_dump());
+        outln!("{:?}", buffer.hex_dump());
         return Ok(());
     }
     let raw_image_buffer = raw_image_buffer.unwrap();
@@ -322,7 +322,7 @@ pub fn view_contents(
         }
         _ => {
             //Not yet supported
-            println!("{:?}", buffer.hex_dump());
+            outln!("{:?}", buffer.hex_dump());
             return Ok(());
         }
     }

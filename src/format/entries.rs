@@ -39,7 +39,7 @@ impl RenderView for EntriesView {
         let max_name_size: usize = self.entries.iter().map(|(n, _)| n.len()).max().unwrap();
 
         for (name, value) in &self.entries {
-            println!("{:width$} : {}", name, value, width = max_name_size)
+            outln!("{:width$} : {}", name, value, width = max_name_size)
         }
 
         Ok(())
