@@ -117,7 +117,8 @@ pub(crate) use crate::shell::shell_manager::ShellManager;
 pub(crate) use crate::shell::value_shell::ValueShell;
 pub(crate) use crate::stream::{InputStream, OutputStream};
 pub(crate) use crate::traits::{
-    DebugDoc, DebugFormatter, FormatDebug, HasTag, PrettyDebug, ShellTypeName, ToDebug,
+    DebugDoc, DebugDocBuilder, DebugFormatter, FormatDebug, HasTag, PrettyDebug, ShellAnnotation,
+    ShellTypeName, ToDebug,
 };
 pub(crate) use crate::Text;
 pub(crate) use async_stream::stream as async_stream;

@@ -11,6 +11,8 @@ pub trait Host: Debug + Send {
 
     fn stdout(&mut self, out: &str);
     fn stderr(&mut self, out: &str);
+
+    fn width(&self) -> usize;
 }
 
 impl Host for Box<dyn Host> {
@@ -36,6 +38,10 @@ impl Host for Box<dyn Host> {
 
     fn err_termcolor(&self) -> termcolor::StandardStream {
         (**self).err_termcolor()
+    }
+
+    fn width(&self) -> usize {
+        (**self).width()
     }
 }
 
@@ -68,8 +74,13 @@ impl Host for BasicHost {
     fn out_termcolor(&self) -> termcolor::StandardStream {
         termcolor::StandardStream::stdout(termcolor::ColorChoice::Auto)
     }
+
     fn err_termcolor(&self) -> termcolor::StandardStream {
         termcolor::StandardStream::stderr(termcolor::ColorChoice::Auto)
+    }
+
+    fn width(&self) -> usize {
+        std::cmp::max(textwrap::termwidth(), 20)
     }
 }
 

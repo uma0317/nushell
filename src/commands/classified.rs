@@ -247,7 +247,18 @@ impl InternalCommand {
 
                     Ok(ReturnSuccess::DebugValue(v)) => {
                         yielded = true;
-                        let value = format!("{}", v.debug(&source));
+
+                        let doc: DebugDocBuilder = (&v.item).into();
+                        let doc: DebugDoc = doc.into();
+                        let mut buffer = termcolor::Buffer::ansi();
+
+                        doc.render_raw(
+                            context.with_host(|host| host.width() - 5),
+                            &mut crate::parser::debug::TermColored::new(&mut buffer),
+                        ).unwrap();
+
+                        let value = String::from_utf8_lossy(buffer.as_slice());
+
                         yield Ok(Value::string(value).tagged_unknown())
                     }
 

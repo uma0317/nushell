@@ -192,9 +192,12 @@ fn requires_at_least_one_column_member_path() {
         sandbox.with_files(vec![EmptyFile("andres.txt")]);
 
         let actual = nu_error!(
-            cwd: dirs.test(), "ls | get"
+            cwd: dirs.test(), "ls | get | get type | echo $it"
         );
 
-        assert!(actual.contains("requires member parameter"));
+        assert_eq!(
+            actual,
+            "[row: name, type, readonly, size, created, accessed, modified]"
+        );
     })
 }

@@ -85,7 +85,7 @@ impl Context {
         })
     }
 
-    pub(crate) fn with_host(&mut self, block: impl FnOnce(&mut dyn Host)) {
+    pub(crate) fn with_host<T>(&mut self, block: impl FnOnce(&mut dyn Host) -> T) -> T {
         let mut host = self.host.lock().unwrap();
 
         block(&mut *host)

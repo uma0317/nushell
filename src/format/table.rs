@@ -2,6 +2,7 @@ use crate::data::Value;
 use crate::format::RenderView;
 use crate::prelude::*;
 use derive_new::new;
+use std::io::Write;
 use textwrap::fill;
 
 use prettytable::format::{FormatBuilder, LinePosition, LineSeparator};
@@ -185,15 +186,26 @@ impl TableView {
         // Wrap cells as needed
         for head in 0..headers.len() {
             if max_per_column[head] > max_naive_column_width {
-                headers[head] = fill(&headers[head], max_column_width);
+                if true_width(&headers[head]) > max_column_width {
+                    headers[head] = fill(&headers[head], max_column_width);
+                }
+
                 for row in 0..entries.len() {
-                    entries[row][head].0 = fill(&entries[row][head].0, max_column_width);
+                    if true_width(&entries[row][head].0) > max_column_width {
+                        entries[row][head].0 = fill(&entries[row][head].0, max_column_width);
+                    }
                 }
             }
         }
 
         Some(TableView { headers, entries })
     }
+}
+
+fn true_width(string: &str) -> usize {
+    let stripped = console::strip_ansi_codes(string);
+
+    stripped.lines().map(|line| line.len()).max().unwrap_or(0)
 }
 
 impl RenderView for TableView {

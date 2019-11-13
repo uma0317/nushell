@@ -1,7 +1,9 @@
 use crate::prelude::*;
 use derive_new::new;
 use getset::Getters;
+use pretty::RenderAnnotated;
 use std::fmt::{self, Write};
+use termcolor::{Color, ColorSpec};
 
 pub trait ShellTypeName {
     fn type_name(&self) -> &'static str;
@@ -67,9 +69,6 @@ pub trait HasTag {
 #[derive(Getters, new)]
 pub struct DebugFormatter<'me, 'args> {
     formatter: &'me mut std::fmt::Formatter<'args>,
-    #[new(value = "pretty::Arena::new()")]
-    #[get = "pub"]
-    arena: pretty::Arena<'me, DebugDoc<'me>>,
     style: ansi_term::Style,
     default_style: ansi_term::Style,
 }
@@ -186,13 +185,94 @@ impl<'a, 'b> std::fmt::Write for DebugFormatter<'a, 'b> {
     }
 }
 
-pub struct ShellAnnotation {}
+#[derive(Debug, Copy, Clone)]
+pub enum ShellStyle {
+    Key,
+    Value,
+    Equals,
+    Kind,
+    Keyword,
+    Primitive,
+    Opaque,
+    Error,
+}
 
-pub type DebugDoc<'a> = pretty::RefDoc<'a, ShellAnnotation>;
+impl From<&str> for ShellStyle {
+    fn from(from: &str) -> ShellStyle {
+        match from {
+            "key" => ShellStyle::Key,
+            "value" => ShellStyle::Value,
+            "equals" => ShellStyle::Equals,
+            "kind" => ShellStyle::Kind,
+            "keyword" => ShellStyle::Keyword,
+            "primitive" => ShellStyle::Primitive,
+            "opaque" => ShellStyle::Opaque,
+            "error" => ShellStyle::Error,
+            _ => panic!("Invalid ShellStyle {:?}", from),
+        }
+    }
+}
+
+impl From<ShellAnnotation> for ColorSpec {
+    fn from(ann: ShellAnnotation) -> ColorSpec {
+        match ann.style {
+            ShellStyle::Key => ColorSpec::new()
+                .set_fg(Some(Color::Black))
+                .set_intense(true)
+                .clone(),
+            ShellStyle::Value => ColorSpec::new()
+                .set_fg(Some(Color::White))
+                .set_intense(true)
+                .clone(),
+            ShellStyle::Equals => ColorSpec::new()
+                .set_fg(Some(Color::Black))
+                .set_intense(true)
+                .clone(),
+            ShellStyle::Kind => ColorSpec::new().set_fg(Some(Color::Cyan)).clone(),
+            ShellStyle::Keyword => ColorSpec::new().set_fg(Some(Color::Magenta)).clone(),
+            ShellStyle::Primitive => ColorSpec::new()
+                .set_fg(Some(Color::Green))
+                .set_intense(true)
+                .clone(),
+            ShellStyle::Opaque => ColorSpec::new()
+                .set_fg(Some(Color::Yellow))
+                .set_intense(true)
+                .clone(),
+            ShellStyle::Error => ColorSpec::new()
+                .set_fg(Some(Color::Red))
+                .set_intense(true)
+                .clone(),
+        }
+    }
+}
+
+#[derive(Debug, Copy, Clone)]
+pub struct ShellAnnotation {
+    style: ShellStyle,
+}
+
+impl ShellAnnotation {
+    pub fn style(style: impl Into<ShellStyle>) -> ShellAnnotation {
+        ShellAnnotation {
+            style: style.into(),
+        }
+    }
+}
+
+pub type DebugDoc = pretty::Doc<'static, pretty::BoxDoc<'static, ShellAnnotation>, ShellAnnotation>;
+pub type DebugDocBuilder = pretty::DocBuilder<'static, pretty::BoxAllocator, ShellAnnotation>;
 
 pub trait PrettyDebug {
-    fn pretty_debug<'arena>(&self, f: &'arena mut DebugFormatter, source: &str)
-        -> DebugDoc<'arena>;
+    fn pretty_debug(&self, f: &mut DebugFormatter, source: &str) -> DebugDoc;
+}
+
+impl<T> PrettyDebug for T
+where
+    T: Into<DebugDoc> + Clone,
+{
+    fn pretty_debug(&self, _f: &mut DebugFormatter, _source: &str) -> DebugDoc {
+        self.clone().into()
+    }
 }
 
 pub trait FormatDebug: std::fmt::Debug {

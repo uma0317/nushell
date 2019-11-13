@@ -1,7 +1,5 @@
 use crate::commands::WholeStreamCommand;
-use crate::data::{Primitive, Value};
 use crate::prelude::*;
-use crate::RawPathMember;
 use futures_util::pin_mut;
 
 pub struct DebugValue;
@@ -32,18 +30,14 @@ impl WholeStreamCommand for DebugValue {
 }
 
 fn debug_value(
-    args: DebugArgs,
-    RunnableContext { input, .. }: RunnableContext,
-) -> Result<OutputStream, ShellError> {
+    _args: DebugArgs,
+    RunnableContext { mut input, .. }: RunnableContext,
+) -> Result<impl ToOutputStream, ShellError> {
     let stream = async_stream! {
-        let values = input.values;
-        pin_mut!(values);
-        while let Some(row) = values.next().await {
+        while let Some(row) = input.values.next().await {
             yield ReturnSuccess::debug_value(row.clone())
         }
     };
 
-    let stream: BoxStream<'static, ReturnValue> = stream.boxed();
-
-    Ok(stream.to_output_stream())
+    Ok(stream)
 }

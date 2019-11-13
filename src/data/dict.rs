@@ -1,8 +1,10 @@
 use crate::data::{Primitive, Value};
 use crate::prelude::*;
+use crate::traits::{DebugDoc, ShellAnnotation};
 use derive_new::new;
 use getset::Getters;
 use indexmap::IndexMap;
+use pretty::{BoxAllocator, DocAllocator};
 use serde::{Deserialize, Serialize};
 use std::cmp::{Ordering, PartialOrd};
 use std::fmt;
@@ -11,6 +13,48 @@ use std::fmt;
 pub struct Dictionary {
     #[get = "pub"]
     pub entries: IndexMap<String, Tagged<Value>>,
+}
+
+#[derive(Debug, new)]
+struct DebugEntry<'a> {
+    key: &'a str,
+    value: &'a Tagged<Value>,
+}
+
+impl<'a> From<DebugEntry<'a>> for DebugDocBuilder {
+    fn from(entry: DebugEntry<'a>) -> DebugDocBuilder {
+        BoxAllocator
+            .text(entry.key.to_string())
+            .annotate(ShellAnnotation::style("key"))
+            .append(
+                BoxAllocator
+                    .text("=")
+                    .annotate(ShellAnnotation::style("equals")),
+            )
+            .append(
+                DebugDocBuilder::from(&entry.value.item).annotate(ShellAnnotation::style("value")),
+            )
+            .group()
+    }
+}
+
+impl From<&Dictionary> for DebugDocBuilder {
+    fn from(dict: &Dictionary) -> DebugDocBuilder {
+        BoxAllocator
+            .text("(")
+            .append(
+                BoxAllocator
+                    .intersperse(
+                        dict.entries()
+                            .iter()
+                            .map(|(key, value)| DebugDocBuilder::from(DebugEntry::new(key, value))),
+                        BoxAllocator.space(),
+                    )
+                    .nest(1)
+                    .group(),
+            )
+            .append(BoxAllocator.text(")"))
+    }
 }
 
 impl PartialOrd for Dictionary {

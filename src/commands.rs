@@ -89,7 +89,6 @@ pub(crate) use config::Config;
 pub(crate) use count::Count;
 pub(crate) use cp::Cpy;
 pub(crate) use date::Date;
-pub(crate) use debug::Debug;
 pub(crate) use debug_value::DebugValue;
 pub(crate) use echo::Echo;
 pub(crate) use enter::Enter;

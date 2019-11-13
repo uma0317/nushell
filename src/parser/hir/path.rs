@@ -2,6 +2,7 @@ use crate::parser::hir::Expression;
 use crate::prelude::*;
 use derive_new::new;
 use getset::{Getters, MutGetters};
+use pretty::{BoxAllocator, DocAllocator};
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
@@ -13,6 +14,15 @@ pub enum RawPathMember {
 
 pub type PathMember = Spanned<RawPathMember>;
 
+impl Into<DebugDocBuilder> for &PathMember {
+    fn into(self) -> DebugDocBuilder {
+        match &self.item {
+            RawPathMember::String(string) => BoxAllocator.text(format!("{:?}", string)),
+            RawPathMember::Int(int) => BoxAllocator.text(format!("{}", int)),
+        }
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize, Ord, PartialOrd, Eq, PartialEq, Getters, Clone, new)]
 pub struct ColumnPath {
     #[get = "pub"]
@@ -22,6 +32,23 @@ pub struct ColumnPath {
 impl ColumnPath {
     pub fn iter(&self) -> impl Iterator<Item = &PathMember> {
         self.members.iter()
+    }
+}
+
+impl Into<DebugDocBuilder> for &ColumnPath {
+    fn into(self) -> DebugDocBuilder {
+        let members: Vec<DebugDocBuilder> =
+            self.members.iter().map(|member| member.into()).collect();
+
+        BoxAllocator.text("(").append(
+            BoxAllocator
+                .text("path")
+                .annotate(ShellAnnotation::style("equals"))
+                .append(BoxAllocator.space())
+                .append(BoxAllocator.intersperse(members, BoxAllocator.space()))
+                .nest(1)
+                .group(),
+        )
     }
 }
 

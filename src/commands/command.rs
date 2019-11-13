@@ -128,11 +128,11 @@ impl CommandArgs {
         ))
     }
 
-    pub fn process<'de, T: Deserialize<'de>>(
+    pub fn process<'de, T: Deserialize<'de>, O: ToOutputStream>(
         self,
         registry: &CommandRegistry,
-        callback: fn(T, RunnableContext) -> Result<OutputStream, ShellError>,
-    ) -> Result<RunnableArgs<T>, ShellError> {
+        callback: fn(T, RunnableContext) -> Result<O, ShellError>,
+    ) -> Result<RunnableArgs<T, O>, ShellError> {
         let shell_manager = self.shell_manager.clone();
         let host = self.host.clone();
         let ctrl_c = self.ctrl_c.clone();
@@ -232,15 +232,15 @@ impl<T> RunnablePerItemArgs<T> {
     }
 }
 
-pub struct RunnableArgs<T> {
+pub struct RunnableArgs<T, O: ToOutputStream> {
     args: T,
     context: RunnableContext,
-    callback: fn(T, RunnableContext) -> Result<OutputStream, ShellError>,
+    callback: fn(T, RunnableContext) -> Result<O, ShellError>,
 }
 
-impl<T> RunnableArgs<T> {
+impl<T, O: ToOutputStream> RunnableArgs<T, O> {
     pub fn run(self) -> Result<OutputStream, ShellError> {
-        (self.callback)(self.args, self.context)
+        (self.callback)(self.args, self.context).map(|v| v.to_output_stream())
     }
 }
 
