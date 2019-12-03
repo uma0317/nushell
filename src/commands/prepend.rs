@@ -1,11 +1,12 @@
 use crate::commands::WholeStreamCommand;
-use crate::errors::ShellError;
-use crate::parser::CommandRegistry;
+use crate::context::CommandRegistry;
 use crate::prelude::*;
+use nu_errors::ShellError;
+use nu_protocol::{Signature, SyntaxShape, Value};
 
 #[derive(Deserialize)]
 struct PrependArgs {
-    row: Tagged<Value>,
+    row: Value,
 }
 
 pub struct Prepend;
@@ -40,7 +41,7 @@ fn prepend(
     PrependArgs { row }: PrependArgs,
     RunnableContext { input, .. }: RunnableContext,
 ) -> Result<OutputStream, ShellError> {
-    let mut prepend: VecDeque<Tagged<Value>> = VecDeque::new();
+    let mut prepend: VecDeque<Value> = VecDeque::new();
     prepend.push_back(row);
 
     Ok(OutputStream::from_input(prepend.chain(input.values)))

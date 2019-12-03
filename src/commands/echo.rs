@@ -1,8 +1,7 @@
-use crate::data::Value;
-use crate::errors::ShellError;
+use crate::data::value;
 use crate::prelude::*;
-
-use crate::parser::registry::Signature;
+use nu_errors::ShellError;
+use nu_protocol::{CallInfo, ReturnSuccess, Signature, SyntaxShape, UntaggedValue, Value};
 
 pub struct Echo;
 
@@ -24,7 +23,7 @@ impl PerItemCommand for Echo {
         call_info: &CallInfo,
         registry: &CommandRegistry,
         raw_args: &RawCommandArgs,
-        _input: Tagged<Value>,
+        _input: Value,
     ) -> Result<OutputStream, ShellError> {
         run(call_info, registry, raw_args)
     }
@@ -42,16 +41,16 @@ fn run(
             match i.as_string() {
                 Ok(s) => {
                     output.push(Ok(ReturnSuccess::Value(
-                        Value::string(s).tagged(i.tag.clone()),
+                        value::string(s).into_value(i.tag.clone()),
                     )));
                 }
                 _ => match i {
-                    Tagged {
-                        item: Value::Table(table),
+                    Value {
+                        value: UntaggedValue::Table(table),
                         ..
                     } => {
-                        for item in table {
-                            output.push(Ok(ReturnSuccess::Value(item.clone())));
+                        for value in table {
+                            output.push(Ok(ReturnSuccess::Value(value.clone())));
                         }
                     }
                     _ => {

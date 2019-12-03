@@ -1,5 +1,8 @@
+use crate::data::value;
 use crate::format::RenderView;
 use crate::prelude::*;
+use nu_errors::ShellError;
+use nu_protocol::Value;
 
 use derive_new::new;
 
@@ -21,7 +24,7 @@ impl EntriesView {
         for desc in descs {
             let value = value.get_data(&desc);
 
-            let formatted_value = value.borrow().format_leaf(None);
+            let formatted_value = value::format_leaf(value.borrow()).plain_string(75);
 
             entries.push((desc.clone(), formatted_value))
         }
@@ -39,7 +42,7 @@ impl RenderView for EntriesView {
         let max_name_size: usize = self.entries.iter().map(|(n, _)| n.len()).max().unwrap();
 
         for (name, value) in &self.entries {
-            println!("{:width$} : {}", name, value, width = max_name_size)
+            outln!("{:width$} : {}", name, value, width = max_name_size)
         }
 
         Ok(())

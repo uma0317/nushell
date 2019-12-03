@@ -1,11 +1,10 @@
 use crate::context::Context;
-use crate::parser::hir::syntax_shape::{color_fallible_syntax, FlatShape, PipelineShape};
-use crate::parser::hir::TokensIterator;
-use crate::parser::nom_input;
-use crate::parser::parse::token_tree::TokenNode;
-use crate::{HasSpan, Spanned, SpannedItem, Tag, Tagged, Text};
 use ansi_term::Color;
 use log::{log_enabled, trace};
+use nu_parser::hir::syntax_shape::color_fallible_syntax;
+use nu_parser::{FlatShape, PipelineShape, TokenNode, TokensIterator};
+use nu_protocol::outln;
+use nu_source::{nom_input, HasSpan, Spanned, Tag, Tagged, Text};
 use rustyline::completion::Completer;
 use rustyline::error::ReadlineError;
 use rustyline::highlight::Highlighter;
@@ -14,11 +13,15 @@ use std::borrow::Cow::{self, Owned};
 
 pub(crate) struct Helper {
     context: Context,
+    pub colored_prompt: String,
 }
 
 impl Helper {
     pub(crate) fn new(context: Context) -> Helper {
-        Helper { context }
+        Helper {
+            context,
+            colored_prompt: String::new(),
+        }
     }
 }
 
@@ -41,8 +44,18 @@ impl Hinter for Helper {
 }
 
 impl Highlighter for Helper {
-    fn highlight_prompt<'b, 's: 'b, 'p: 'b>(&'s self, prompt: &'p str, _: bool) -> Cow<'b, str> {
-        Owned("\x1b[32m".to_owned() + &prompt[0..prompt.len() - 2] + "\x1b[m> ")
+    fn highlight_prompt<'b, 's: 'b, 'p: 'b>(
+        &'s self,
+        prompt: &'p str,
+        default: bool,
+    ) -> Cow<'b, str> {
+        use std::borrow::Cow::Borrowed;
+
+        if default {
+            Borrowed(&self.colored_prompt)
+        } else {
+            Borrowed(prompt)
+        }
     }
 
     fn highlight_hint<'h>(&self, hint: &'h str) -> Cow<'h, str> {
@@ -50,7 +63,7 @@ impl Highlighter for Helper {
     }
 
     fn highlight<'l>(&self, line: &'l str, _pos: usize) -> Cow<'l, str> {
-        let tokens = crate::parser::pipeline(nom_input(line));
+        let tokens = nu_parser::pipeline(nom_input(line));
 
         match tokens {
             Err(_) => Cow::Borrowed(line),
@@ -61,8 +74,8 @@ impl Highlighter for Helper {
                     Ok(v) => v,
                 };
 
-                let tokens = vec![TokenNode::Pipeline(pipeline.clone().spanned(v.span()))];
-                let mut tokens = TokensIterator::all(&tokens[..], v.span());
+                let tokens = vec![TokenNode::Pipeline(pipeline.clone())];
+                let mut tokens = TokensIterator::all(&tokens[..], Text::from(line), v.span());
 
                 let text = Text::from(line);
                 let expand_context = self.context.expand_context(&text);
@@ -92,10 +105,10 @@ impl Highlighter for Helper {
                 trace!(target: "nu::color_syntax", "{:#?}", tokens.color_tracer());
 
                 if log_enabled!(target: "nu::color_syntax", log::Level::Debug) {
-                    println!("");
+                    outln!("");
                     ptree::print_tree(&tokens.color_tracer().clone().print(Text::from(line)))
                         .unwrap();
-                    println!("");
+                    outln!("");
                 }
 
                 for shape in shapes {

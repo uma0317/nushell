@@ -1,6 +1,8 @@
 use crate::commands::WholeStreamCommand;
-use crate::data::Value;
+use crate::data::value;
 use crate::prelude::*;
+use nu_errors::ShellError;
+use nu_protocol::{ReturnSuccess, Signature, UntaggedValue, Value};
 
 pub struct ToURL;
 
@@ -32,16 +34,16 @@ fn to_url(args: CommandArgs, registry: &CommandRegistry) -> Result<OutputStream,
     let input = args.input;
 
     let stream = async_stream! {
-        let input: Vec<Tagged<Value>> = input.values.collect().await;
+        let input: Vec<Value> = input.values.collect().await;
 
         for value in input {
             match value {
-                Tagged { item: Value::Row(row), .. } => {
+                Value { value: UntaggedValue::Row(row), .. } => {
                     let mut row_vec = vec![];
                     for (k,v) in row.entries {
                         match v.as_string() {
                             Ok(s) => {
-                                row_vec.push((k.clone(), s));
+                                row_vec.push((k.clone(), s.to_string()));
                             }
                             _ => {
                                 yield Err(ShellError::labeled_error_with_secondary(
@@ -57,7 +59,7 @@ fn to_url(args: CommandArgs, registry: &CommandRegistry) -> Result<OutputStream,
 
                     match serde_urlencoded::to_string(row_vec) {
                         Ok(s) => {
-                            yield ReturnSuccess::value(Value::string(s).tagged(&tag));
+                            yield ReturnSuccess::value(value::string(s).into_value(&tag));
                         }
                         _ => {
                             yield Err(ShellError::labeled_error(
@@ -68,13 +70,13 @@ fn to_url(args: CommandArgs, registry: &CommandRegistry) -> Result<OutputStream,
                         }
                     }
                 }
-                Tagged { tag: value_tag, .. } => {
+                Value { tag: value_tag, .. } => {
                     yield Err(ShellError::labeled_error_with_secondary(
                         "Expected a table from pipeline",
                         "requires table input",
                         &tag,
                         "value originates from here",
-                        value_tag,
+                        value_tag.span,
                     ))
                 }
             }

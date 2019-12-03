@@ -1,6 +1,8 @@
 use crate::commands::WholeStreamCommand;
-use crate::errors::ShellError;
 use crate::prelude::*;
+use nu_errors::ShellError;
+use nu_protocol::{Signature, SyntaxShape};
+use nu_source::Tagged;
 use std::path::PathBuf;
 
 pub struct LS;
@@ -8,6 +10,7 @@ pub struct LS;
 #[derive(Deserialize)]
 pub struct LsArgs {
     path: Option<Tagged<PathBuf>>,
+    full: bool,
 }
 
 impl WholeStreamCommand for LS {
@@ -16,11 +19,13 @@ impl WholeStreamCommand for LS {
     }
 
     fn signature(&self) -> Signature {
-        Signature::build("ls").optional(
-            "path",
-            SyntaxShape::Pattern,
-            "a path to get the directory contents from",
-        )
+        Signature::build("ls")
+            .optional(
+                "path",
+                SyntaxShape::Pattern,
+                "a path to get the directory contents from",
+            )
+            .switch("full", "list all available columns for each entry")
     }
 
     fn usage(&self) -> &str {
@@ -37,6 +42,6 @@ impl WholeStreamCommand for LS {
     }
 }
 
-fn ls(LsArgs { path }: LsArgs, context: RunnableContext) -> Result<OutputStream, ShellError> {
-    context.shell_manager.ls(path, &context)
+fn ls(LsArgs { path, full }: LsArgs, context: RunnableContext) -> Result<OutputStream, ShellError> {
+    context.shell_manager.ls(path, &context, full)
 }

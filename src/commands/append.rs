@@ -1,11 +1,12 @@
 use crate::commands::WholeStreamCommand;
-use crate::errors::ShellError;
-use crate::parser::CommandRegistry;
+use crate::context::CommandRegistry;
 use crate::prelude::*;
+use nu_errors::ShellError;
+use nu_protocol::{Signature, SyntaxShape, Value};
 
 #[derive(Deserialize)]
 struct AppendArgs {
-    row: Tagged<Value>,
+    row: Value,
 }
 
 pub struct Append;
@@ -40,7 +41,7 @@ fn append(
     AppendArgs { row }: AppendArgs,
     RunnableContext { input, .. }: RunnableContext,
 ) -> Result<OutputStream, ShellError> {
-    let mut after: VecDeque<Tagged<Value>> = VecDeque::new();
+    let mut after: VecDeque<Value> = VecDeque::new();
     after.push_back(row);
 
     Ok(OutputStream::from_input(input.values.chain(after)))

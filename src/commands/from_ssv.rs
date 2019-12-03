@@ -1,6 +1,9 @@
 use crate::commands::WholeStreamCommand;
-use crate::data::{Primitive, TaggedDictBuilder, Value};
+use crate::data::TaggedDictBuilder;
 use crate::prelude::*;
+use nu_errors::ShellError;
+use nu_protocol::{Primitive, ReturnSuccess, Signature, SyntaxShape, UntaggedValue, Value};
+use nu_source::Tagged;
 
 pub struct FromSSV;
 
@@ -223,23 +226,24 @@ fn from_ssv_string_to_value(
     aligned_columns: bool,
     split_at: usize,
     tag: impl Into<Tag>,
-) -> Option<Tagged<Value>> {
+) -> Option<Value> {
     let tag = tag.into();
     let rows = string_to_table(s, headerless, aligned_columns, split_at)?
         .iter()
         .map(|row| {
             let mut tagged_dict = TaggedDictBuilder::new(&tag);
             for (col, entry) in row {
-                tagged_dict.insert_tagged(
+                tagged_dict.insert_value(
                     col,
-                    Value::Primitive(Primitive::String(String::from(entry))).tagged(&tag),
+                    UntaggedValue::Primitive(Primitive::String(String::from(entry)))
+                        .into_value(&tag),
                 )
             }
-            tagged_dict.into_tagged_value()
+            tagged_dict.into_value()
         })
         .collect();
 
-    Some(Value::Table(rows).tagged(&tag))
+    Some(UntaggedValue::Table(rows).into_value(&tag))
 }
 
 fn from_ssv(
@@ -251,7 +255,7 @@ fn from_ssv(
     RunnableContext { input, name, .. }: RunnableContext,
 ) -> Result<OutputStream, ShellError> {
     let stream = async_stream! {
-        let values: Vec<Tagged<Value>> = input.values.collect().await;
+        let values: Vec<Value> = input.values.collect().await;
         let mut concat_string = String::new();
         let mut latest_tag: Option<Tag> = None;
         let split_at = match minimum_spaces {
@@ -260,25 +264,25 @@ fn from_ssv(
         };
 
         for value in values {
-            let value_tag = value.tag();
+            let value_tag = value.tag.clone();
             latest_tag = Some(value_tag.clone());
-            match value.item {
-                Value::Primitive(Primitive::String(s)) => {
-                    concat_string.push_str(&s);
-                }
-                _ => yield Err(ShellError::labeled_error_with_secondary (
+            if let Ok(s) = value.as_string() {
+                concat_string.push_str(&s);
+            }
+            else {
+                yield Err(ShellError::labeled_error_with_secondary (
                     "Expected a string from pipeline",
                     "requires string input",
                     &name,
                     "value originates from here",
                     &value_tag
-                )),
+                ))
             }
         }
 
         match from_ssv_string_to_value(&concat_string, headerless, aligned_columns, split_at, name.clone()) {
             Some(x) => match x {
-                Tagged { item: Value::Table(list), ..} => {
+                Value { value: UntaggedValue::Table(list), ..} => {
                     for l in list { yield ReturnSuccess::value(l) }
                 }
                 x => yield ReturnSuccess::value(x)
@@ -488,7 +492,7 @@ mod tests {
 
     #[test]
     fn input_is_parsed_correctly_if_either_option_works() {
-        let input =             r#"
+        let input = r#"
                 docker-registry   docker-registry=default                   docker-registry=default   172.30.78.158   5000/TCP
                 kubernetes        component=apiserver,provider=kubernetes   <none>                    172.30.0.2      443/TCP
                 kubernetes-ro     component=apiserver,provider=kubernetes   <none>                    172.30.0.1      80/TCP

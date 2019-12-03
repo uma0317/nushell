@@ -1,7 +1,11 @@
 use crate::commands::WholeStreamCommand;
-use crate::parser::hir::SyntaxShape;
+use crate::data::value;
 use crate::prelude::*;
+use nu_errors::ShellError;
+use nu_protocol::{Primitive, ReturnSuccess, Signature, SyntaxShape, UntaggedValue, Value};
+use nu_source::Tagged;
 use num_traits::cast::ToPrimitive;
+
 pub struct MapMaxBy;
 
 #[derive(Deserialize)]
@@ -40,7 +44,7 @@ pub fn map_max_by(
     RunnableContext { input, name, .. }: RunnableContext,
 ) -> Result<OutputStream, ShellError> {
     let stream = async_stream! {
-        let values: Vec<Tagged<Value>> = input.values.collect().await;
+        let values: Vec<Value> = input.values.collect().await;
 
 
         if values.is_empty() {
@@ -68,27 +72,27 @@ pub fn map_max_by(
 }
 
 pub fn map_max(
-    values: &Tagged<Value>,
+    values: &Value,
     _map_by_column_name: Option<String>,
     tag: impl Into<Tag>,
-) -> Result<Tagged<Value>, ShellError> {
+) -> Result<Value, ShellError> {
     let tag = tag.into();
 
-    let results: Tagged<Value> = match values {
-        Tagged {
-            item: Value::Table(datasets),
+    let results: Value = match values {
+        Value {
+            value: UntaggedValue::Table(datasets),
             ..
         } => {
             let datasets: Vec<_> = datasets
                 .into_iter()
                 .map(|subsets| match subsets {
-                    Tagged {
-                        item: Value::Table(data),
+                    Value {
+                        value: UntaggedValue::Table(data),
                         ..
                     } => {
                         let data = data.into_iter().fold(0, |acc, value| match value {
-                            Tagged {
-                                item: Value::Primitive(Primitive::Int(n)),
+                            Value {
+                                value: UntaggedValue::Primitive(Primitive::Int(n)),
                                 ..
                             } => {
                                 if n.to_i32().unwrap() > acc {
@@ -99,15 +103,15 @@ pub fn map_max(
                             }
                             _ => acc,
                         });
-                        Value::number(data).tagged(&tag)
+                        value::number(data).into_value(&tag)
                     }
-                    _ => Value::number(0).tagged(&tag),
+                    _ => value::number(0).into_value(&tag),
                 })
                 .collect();
 
             let datasets = datasets.iter().fold(0, |max, value| match value {
-                Tagged {
-                    item: Value::Primitive(Primitive::Int(n)),
+                Value {
+                    value: UntaggedValue::Primitive(Primitive::Int(n)),
                     ..
                 } => {
                     if n.to_i32().unwrap() > max {
@@ -118,9 +122,9 @@ pub fn map_max(
                 }
                 _ => max,
             });
-            Value::number(datasets).tagged(&tag)
+            value::number(datasets).into_value(&tag)
         }
-        _ => Value::number(-1).tagged(&tag),
+        _ => value::number(-1).into_value(&tag),
     };
 
     Ok(results)
@@ -134,28 +138,28 @@ mod tests {
     use crate::commands::map_max_by::map_max;
     use crate::commands::reduce_by::reduce;
     use crate::commands::t_sort_by::t_sort;
-    use crate::data::meta::*;
     use crate::prelude::*;
-    use crate::Value;
     use indexmap::IndexMap;
+    use nu_protocol::{UntaggedValue, Value};
+    use nu_source::*;
 
-    fn int(s: impl Into<BigInt>) -> Tagged<Value> {
-        Value::int(s).tagged_unknown()
+    fn int(s: impl Into<BigInt>) -> Value {
+        value::int(s).into_untagged_value()
     }
 
-    fn string(input: impl Into<String>) -> Tagged<Value> {
-        Value::string(input.into()).tagged_unknown()
+    fn string(input: impl Into<String>) -> Value {
+        value::string(input.into()).into_untagged_value()
     }
 
-    fn row(entries: IndexMap<String, Tagged<Value>>) -> Tagged<Value> {
-        Value::row(entries).tagged_unknown()
+    fn row(entries: IndexMap<String, Value>) -> Value {
+        value::row(entries).into_untagged_value()
     }
 
-    fn nu_releases_evaluated_by_default_one() -> Tagged<Value> {
+    fn nu_releases_evaluated_by_default_one() -> Value {
         evaluate(&nu_releases_sorted_by_date(), None, Tag::unknown()).unwrap()
     }
 
-    fn nu_releases_reduced_by_sum() -> Tagged<Value> {
+    fn nu_releases_reduced_by_sum() -> Value {
         reduce(
             &nu_releases_evaluated_by_default_one(),
             Some(String::from("sum")),
@@ -164,7 +168,7 @@ mod tests {
         .unwrap()
     }
 
-    fn nu_releases_sorted_by_date() -> Tagged<Value> {
+    fn nu_releases_sorted_by_date() -> Value {
         let key = String::from("date");
 
         t_sort(
@@ -176,12 +180,12 @@ mod tests {
         .unwrap()
     }
 
-    fn nu_releases_grouped_by_date() -> Tagged<Value> {
+    fn nu_releases_grouped_by_date() -> Value {
         let key = String::from("date").tagged_unknown();
         group(&key, nu_releases_commiters(), Tag::unknown()).unwrap()
     }
 
-    fn nu_releases_commiters() -> Vec<Tagged<Value>> {
+    fn nu_releases_commiters() -> Vec<Value> {
         vec![
             row(
                 indexmap! {"name".into() => string("AR"), "country".into() => string("EC"), "date".into() => string("August 23-2019")},

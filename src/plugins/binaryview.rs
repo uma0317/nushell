@@ -1,7 +1,8 @@
 use crossterm::{cursor, terminal, Attribute, RawScreen};
-use nu::{
-    serve_plugin, AnchorLocation, CallInfo, Plugin, Primitive, ShellError, Signature, Tagged, Value,
-};
+use nu::{serve_plugin, Plugin};
+use nu_errors::ShellError;
+use nu_protocol::{outln, CallInfo, Primitive, Signature, UntaggedValue, Value};
+use nu_source::AnchorLocation;
 use pretty_hex::*;
 
 struct BinaryView;
@@ -19,11 +20,11 @@ impl Plugin for BinaryView {
             .switch("lores", "use low resolution output mode"))
     }
 
-    fn sink(&mut self, call_info: CallInfo, input: Vec<Tagged<Value>>) {
+    fn sink(&mut self, call_info: CallInfo, input: Vec<Value>) {
         for v in input {
             let value_anchor = v.anchor();
-            match v.item {
-                Value::Primitive(Primitive::Binary(b)) => {
+            match &v.value {
+                UntaggedValue::Primitive(Primitive::Binary(b)) => {
                     let _ = view_binary(&b, value_anchor.as_ref(), call_info.args.has("lores"));
                 }
                 _ => {}
@@ -47,7 +48,7 @@ fn view_binary(
                 }
                 #[cfg(not(feature = "rawkey"))]
                 {
-                    println!("Interactive binary viewing currently requires the 'rawkey' feature");
+                    outln!("Interactive binary viewing currently requires the 'rawkey' feature");
                     return Ok(());
                 }
             }
@@ -117,7 +118,7 @@ impl RenderContext {
                 );
             }
         }
-        println!("{}", Attribute::Reset);
+        outln!("{}", Attribute::Reset);
         Ok(())
     }
     fn render_to_screen_hires(&mut self) -> Result<(), Box<dyn std::error::Error>> {
@@ -174,7 +175,7 @@ impl RenderContext {
                 _ => {}
             }
         }
-        println!("{}", Attribute::Reset);
+        outln!("{}", Attribute::Reset);
         Ok(())
     }
     pub fn flush(&mut self) -> Result<(), Box<dyn std::error::Error>> {
@@ -211,7 +212,7 @@ struct RawImageBuffer {
     buffer: Vec<u8>,
 }
 
-fn load_from_png_buffer(buffer: &[u8]) -> Option<(RawImageBuffer)> {
+fn load_from_png_buffer(buffer: &[u8]) -> Option<RawImageBuffer> {
     use image::ImageDecoder;
 
     let decoder = image::png::PNGDecoder::new(buffer);
@@ -231,7 +232,7 @@ fn load_from_png_buffer(buffer: &[u8]) -> Option<(RawImageBuffer)> {
     })
 }
 
-fn load_from_jpg_buffer(buffer: &[u8]) -> Option<(RawImageBuffer)> {
+fn load_from_jpg_buffer(buffer: &[u8]) -> Option<RawImageBuffer> {
     use image::ImageDecoder;
 
     let decoder = image::jpeg::JPEGDecoder::new(buffer);
@@ -264,7 +265,7 @@ pub fn view_contents(
 
     if raw_image_buffer.is_none() {
         //Not yet supported
-        println!("{:?}", buffer.hex_dump());
+        outln!("{:?}", buffer.hex_dump());
         return Ok(());
     }
     let raw_image_buffer = raw_image_buffer.unwrap();
@@ -322,7 +323,7 @@ pub fn view_contents(
         }
         _ => {
             //Not yet supported
-            println!("{:?}", buffer.hex_dump());
+            outln!("{:?}", buffer.hex_dump());
             return Ok(());
         }
     }

@@ -1,8 +1,13 @@
 use crate::commands::PerItemCommand;
+use crate::data::base::property_get::get_data_by_key;
 use crate::data::{command_dict, TaggedDictBuilder};
-use crate::errors::ShellError;
-use crate::parser::registry::{self, NamedType, PositionalType};
 use crate::prelude::*;
+use nu_errors::ShellError;
+use nu_protocol::{
+    CallInfo, NamedType, PositionalType, Primitive, ReturnSuccess, Signature, SyntaxShape,
+    UntaggedValue, Value,
+};
+use nu_source::SpannedItem;
 
 pub struct Help;
 
@@ -11,7 +16,7 @@ impl PerItemCommand for Help {
         "help"
     }
 
-    fn signature(&self) -> registry::Signature {
+    fn signature(&self) -> Signature {
         Signature::build("help").rest(SyntaxShape::Any, "the name of command(s) to get help on")
     }
 
@@ -24,13 +29,13 @@ impl PerItemCommand for Help {
         call_info: &CallInfo,
         registry: &CommandRegistry,
         _raw_args: &RawCommandArgs,
-        _input: Tagged<Value>,
+        _input: Value,
     ) -> Result<OutputStream, ShellError> {
         let tag = &call_info.name_tag;
 
         match call_info.args.nth(0) {
-            Some(Tagged {
-                item: Value::Primitive(Primitive::String(document)),
+            Some(Value {
+                value: UntaggedValue::Primitive(Primitive::String(document)),
                 tag,
             }) => {
                 let mut help = VecDeque::new();
@@ -41,13 +46,16 @@ impl PerItemCommand for Help {
                         let mut short_desc = TaggedDictBuilder::new(tag.clone());
                         let value = command_dict(registry.get_command(&cmd).unwrap(), tag.clone());
 
-                        short_desc.insert("name", cmd);
-                        short_desc.insert(
+                        short_desc.insert_untagged("name", cmd);
+                        short_desc.insert_untagged(
                             "description",
-                            value.get_data_by_key("usage").unwrap().as_string().unwrap(),
+                            get_data_by_key(&value, "usage".spanned_unknown())
+                                .unwrap()
+                                .as_string()
+                                .unwrap(),
                         );
 
-                        help.push_back(ReturnSuccess::value(short_desc.into_tagged_value()));
+                        help.push_back(ReturnSuccess::value(short_desc.into_value()));
                     }
                 } else {
                     if let Some(command) = registry.get_command(document) {
@@ -125,7 +133,7 @@ impl PerItemCommand for Help {
                                         long_desc.push_str(&format!(
                                             "  --{} <{}> (required parameter){} {}\n",
                                             flag,
-                                            m,
+                                            m.display(),
                                             if ty.1.len() > 0 { ":" } else { "" },
                                             ty.1
                                         ));
@@ -134,7 +142,7 @@ impl PerItemCommand for Help {
                                         long_desc.push_str(&format!(
                                             "  --{} <{}>{} {}\n",
                                             flag,
-                                            o,
+                                            o.display(),
                                             if ty.1.len() > 0 { ":" } else { "" },
                                             ty.1
                                         ));
@@ -144,7 +152,7 @@ impl PerItemCommand for Help {
                         }
 
                         help.push_back(ReturnSuccess::value(
-                            Value::string(long_desc).tagged(tag.clone()),
+                            value::string(long_desc).into_value(tag.clone()),
                         ));
                     }
                 }
@@ -162,7 +170,7 @@ You can also learn more at https://book.nushell.sh"#;
 
                 let mut output_stream = VecDeque::new();
 
-                output_stream.push_back(ReturnSuccess::value(Value::string(msg).tagged(tag)));
+                output_stream.push_back(ReturnSuccess::value(value::string(msg).into_value(tag)));
 
                 Ok(output_stream.to_output_stream())
             }

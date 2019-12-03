@@ -1,6 +1,10 @@
 use crate::commands::WholeStreamCommand;
-use crate::parser::hir::SyntaxShape;
+use crate::data::value;
 use crate::prelude::*;
+use nu_errors::ShellError;
+use nu_protocol::{ReturnSuccess, Signature, SyntaxShape, UntaggedValue, Value};
+use nu_source::{SpannedItem, Tagged};
+
 pub struct EvaluateBy;
 
 #[derive(Deserialize)]
@@ -39,7 +43,7 @@ pub fn evaluate_by(
     RunnableContext { input, name, .. }: RunnableContext,
 ) -> Result<OutputStream, ShellError> {
     let stream = async_stream! {
-        let values: Vec<Tagged<Value>> = input.values.collect().await;
+        let values: Vec<Value> = input.values.collect().await;
 
 
         if values.is_empty() {
@@ -66,26 +70,18 @@ pub fn evaluate_by(
     Ok(stream.to_output_stream())
 }
 
-fn fetch(
-    key: Option<String>,
-) -> Box<dyn Fn(Tagged<Value>, Tag) -> Option<Tagged<Value>> + 'static> {
-    Box::new(move |value: Tagged<Value>, tag| match key {
-        Some(ref key_given) => {
-            if let Some(Tagged { item, .. }) = value.get_data_by_key(&key_given) {
-                Some(item.clone().tagged(tag))
-            } else {
-                None
-            }
-        }
-        None => Some(Value::int(1).tagged(tag)),
+fn fetch(key: Option<String>) -> Box<dyn Fn(Value, Tag) -> Option<Value> + 'static> {
+    Box::new(move |value: Value, tag| match &key {
+        Some(key_given) => value.get_data_by_key(key_given[..].spanned(tag.span)),
+        None => Some(value::int(1).into_value(tag)),
     })
 }
 
 pub fn evaluate(
-    values: &Tagged<Value>,
+    values: &Value,
     evaluator: Option<String>,
     tag: impl Into<Tag>,
-) -> Result<Tagged<Value>, ShellError> {
+) -> Result<Value, ShellError> {
     let tag = tag.into();
 
     let evaluate_with = match evaluator {
@@ -93,44 +89,44 @@ pub fn evaluate(
         None => fetch(None),
     };
 
-    let results: Tagged<Value> = match values {
-        Tagged {
-            item: Value::Table(datasets),
+    let results: Value = match values {
+        Value {
+            value: UntaggedValue::Table(datasets),
             ..
         } => {
             let datasets: Vec<_> = datasets
                 .into_iter()
                 .map(|subsets| match subsets {
-                    Tagged {
-                        item: Value::Table(subsets),
+                    Value {
+                        value: UntaggedValue::Table(subsets),
                         ..
                     } => {
                         let subsets: Vec<_> = subsets
                             .clone()
                             .into_iter()
                             .map(|data| match data {
-                                Tagged {
-                                    item: Value::Table(data),
+                                Value {
+                                    value: UntaggedValue::Table(data),
                                     ..
                                 } => {
                                     let data: Vec<_> = data
                                         .into_iter()
                                         .map(|x| evaluate_with(x.clone(), tag.clone()).unwrap())
                                         .collect();
-                                    Value::Table(data).tagged(&tag)
+                                    UntaggedValue::Table(data).into_value(&tag)
                                 }
-                                _ => Value::Table(vec![]).tagged(&tag),
+                                _ => UntaggedValue::Table(vec![]).into_value(&tag),
                             })
                             .collect();
-                        Value::Table(subsets).tagged(&tag)
+                        UntaggedValue::Table(subsets).into_value(&tag)
                     }
-                    _ => Value::Table(vec![]).tagged(&tag),
+                    _ => UntaggedValue::Table(vec![]).into_value(&tag),
                 })
                 .collect();
 
-            Value::Table(datasets.clone()).tagged(&tag)
+            UntaggedValue::Table(datasets.clone()).into_value(&tag)
         }
-        _ => Value::Table(vec![]).tagged(&tag),
+        _ => UntaggedValue::Table(vec![]).into_value(&tag),
     };
 
     Ok(results)
@@ -142,28 +138,29 @@ mod tests {
     use crate::commands::evaluate_by::{evaluate, fetch};
     use crate::commands::group_by::group;
     use crate::commands::t_sort_by::t_sort;
-    use crate::data::meta::*;
+    use crate::data::value;
     use crate::prelude::*;
-    use crate::Value;
     use indexmap::IndexMap;
+    use nu_protocol::{UntaggedValue, Value};
+    use nu_source::TaggedItem;
 
-    fn int(s: impl Into<BigInt>) -> Tagged<Value> {
-        Value::int(s).tagged_unknown()
+    fn int(s: impl Into<BigInt>) -> Value {
+        value::int(s).into_untagged_value()
     }
 
-    fn string(input: impl Into<String>) -> Tagged<Value> {
-        Value::string(input.into()).tagged_unknown()
+    fn string(input: impl Into<String>) -> Value {
+        value::string(input.into()).into_untagged_value()
     }
 
-    fn row(entries: IndexMap<String, Tagged<Value>>) -> Tagged<Value> {
-        Value::row(entries).tagged_unknown()
+    fn row(entries: IndexMap<String, Value>) -> Value {
+        value::row(entries).into_untagged_value()
     }
 
-    fn table(list: &Vec<Tagged<Value>>) -> Tagged<Value> {
-        Value::table(list).tagged_unknown()
+    fn table(list: &Vec<Value>) -> Value {
+        value::table(list).into_untagged_value()
     }
 
-    fn nu_releases_sorted_by_date() -> Tagged<Value> {
+    fn nu_releases_sorted_by_date() -> Value {
         let key = String::from("date");
 
         t_sort(
@@ -175,12 +172,12 @@ mod tests {
         .unwrap()
     }
 
-    fn nu_releases_grouped_by_date() -> Tagged<Value> {
+    fn nu_releases_grouped_by_date() -> Value {
         let key = String::from("date").tagged_unknown();
         group(&key, nu_releases_commiters(), Tag::unknown()).unwrap()
     }
 
-    fn nu_releases_commiters() -> Vec<Tagged<Value>> {
+    fn nu_releases_commiters() -> Vec<Value> {
         vec![
             row(
                 indexmap! {"name".into() => string("AR"), "country".into() => string("EC"), "date".into() => string("August 23-2019")},
@@ -228,7 +225,7 @@ mod tests {
 
         assert_eq!(
             evaluator(subject, Tag::unknown()),
-            Some(Value::int(1).tagged_unknown())
+            Some(value::int(1).into_untagged_value())
         );
     }
 

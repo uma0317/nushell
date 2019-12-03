@@ -1,7 +1,8 @@
 use crate::commands::WholeStreamCommand;
-use crate::data::{Primitive, TaggedDictBuilder, Value};
-use crate::errors::ShellError;
+use crate::data::{value, TaggedDictBuilder};
 use crate::prelude::*;
+use nu_errors::ShellError;
+use nu_protocol::{Primitive, ReturnSuccess, Signature, UntaggedValue, Value};
 use rusqlite::{types::ValueRef, Connection, Row, NO_PARAMS};
 use std::io::Write;
 use std::path::Path;
@@ -57,7 +58,7 @@ impl WholeStreamCommand for FromDB {
 pub fn convert_sqlite_file_to_nu_value(
     path: &Path,
     tag: impl Into<Tag> + Clone,
-) -> Result<Tagged<Value>, rusqlite::Error> {
+) -> Result<Value, rusqlite::Error> {
     let conn = Connection::open(path)?;
 
     let mut meta_out = Vec::new();
@@ -72,48 +73,54 @@ pub fn convert_sqlite_file_to_nu_value(
         while let Some(table_row) = table_rows.next()? {
             out.push(convert_sqlite_row_to_nu_value(table_row, tag.clone())?)
         }
-        meta_dict.insert_tagged(
+        meta_dict.insert_value(
             "table_name".to_string(),
-            Value::Primitive(Primitive::String(table_name)).tagged(tag.clone()),
+            UntaggedValue::Primitive(Primitive::String(table_name)).into_value(tag.clone()),
         );
-        meta_dict.insert_tagged("table_values", Value::Table(out).tagged(tag.clone()));
-        meta_out.push(meta_dict.into_tagged_value());
+        meta_dict.insert_value(
+            "table_values",
+            UntaggedValue::Table(out).into_value(tag.clone()),
+        );
+        meta_out.push(meta_dict.into_value());
     }
     let tag = tag.into();
-    Ok(Value::Table(meta_out).tagged(tag))
+    Ok(UntaggedValue::Table(meta_out).into_value(tag))
 }
 
 fn convert_sqlite_row_to_nu_value(
     row: &Row,
     tag: impl Into<Tag> + Clone,
-) -> Result<Tagged<Value>, rusqlite::Error> {
+) -> Result<Value, rusqlite::Error> {
     let mut collected = TaggedDictBuilder::new(tag.clone());
     for (i, c) in row.columns().iter().enumerate() {
-        collected.insert_tagged(
+        collected.insert_value(
             c.name().to_string(),
             convert_sqlite_value_to_nu_value(row.get_raw(i), tag.clone()),
         );
     }
-    return Ok(collected.into_tagged_value());
+    return Ok(collected.into_value());
 }
 
-fn convert_sqlite_value_to_nu_value(value: ValueRef, tag: impl Into<Tag> + Clone) -> Tagged<Value> {
+fn convert_sqlite_value_to_nu_value(value: ValueRef, tag: impl Into<Tag> + Clone) -> Value {
     match value {
-        ValueRef::Null => Value::Primitive(Primitive::String(String::from(""))).tagged(tag),
-        ValueRef::Integer(i) => Value::number(i).tagged(tag),
-        ValueRef::Real(f) => Value::number(f).tagged(tag),
+        ValueRef::Null => {
+            UntaggedValue::Primitive(Primitive::String(String::from(""))).into_value(tag)
+        }
+        ValueRef::Integer(i) => value::number(i).into_value(tag),
+        ValueRef::Real(f) => value::number(f).into_value(tag),
         t @ ValueRef::Text(_) => {
             // this unwrap is safe because we know the ValueRef is Text.
-            Value::Primitive(Primitive::String(t.as_str().unwrap().to_string())).tagged(tag)
+            UntaggedValue::Primitive(Primitive::String(t.as_str().unwrap().to_string()))
+                .into_value(tag)
         }
-        ValueRef::Blob(u) => Value::binary(u.to_owned()).tagged(tag),
+        ValueRef::Blob(u) => value::binary(u.to_owned()).into_value(tag),
     }
 }
 
 pub fn from_sqlite_bytes_to_value(
     mut bytes: Vec<u8>,
     tag: impl Into<Tag> + Clone,
-) -> Result<Tagged<Value>, std::io::Error> {
+) -> Result<Value, std::io::Error> {
     // FIXME: should probably write a sqlite virtual filesystem
     // that will allow us to use bytes as a file to avoid this
     // write out, but this will require C code. Might be
@@ -132,15 +139,15 @@ fn from_sqlite(args: CommandArgs, registry: &CommandRegistry) -> Result<OutputSt
     let input = args.input;
 
     let stream = async_stream! {
-        let values: Vec<Tagged<Value>> = input.values.collect().await;
+        let values: Vec<Value> = input.values.collect().await;
 
         for value in values {
-            let value_tag = value.tag();
-            match value.item {
-                Value::Primitive(Primitive::Binary(vb)) =>
+            let value_tag = &value.tag;
+            match value.value {
+                UntaggedValue::Primitive(Primitive::Binary(vb)) =>
                     match from_sqlite_bytes_to_value(vb, tag.clone()) {
                         Ok(x) => match x {
-                            Tagged { item: Value::Table(list), .. } => {
+                            Value { value: UntaggedValue::Table(list), .. } => {
                                 for l in list {
                                     yield ReturnSuccess::value(l);
                                 }
@@ -158,8 +165,8 @@ fn from_sqlite(args: CommandArgs, registry: &CommandRegistry) -> Result<OutputSt
                         }
                     }
                 _ => yield Err(ShellError::labeled_error_with_secondary(
-                    "Expected a string from pipeline",
-                    "requires string input",
+                    "Expected binary data from pipeline",
+                    "requires binary data input",
                     &tag,
                     "value originates from here",
                     value_tag,

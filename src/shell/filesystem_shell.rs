@@ -8,6 +8,9 @@ use crate::prelude::*;
 use crate::shell::completer::NuCompleter;
 use crate::shell::shell::Shell;
 use crate::utils::FileStructure;
+use nu_errors::ShellError;
+use nu_protocol::{Primitive, ReturnSuccess, UntaggedValue};
+use nu_source::Tagged;
 use rustyline::completion::FilenameCompleter;
 use rustyline::hint::{Hinter, HistoryHinter};
 use std::path::{Path, PathBuf};
@@ -86,6 +89,7 @@ impl Shell for FilesystemShell {
         &self,
         pattern: Option<Tagged<PathBuf>>,
         context: &RunnableContext,
+        full: bool,
     ) -> Result<OutputStream, ShellError> {
         let cwd = self.path();
         let mut full_path = PathBuf::from(self.path());
@@ -136,7 +140,7 @@ impl Shell for FilesystemShell {
                                     Path::new(&filepath)
                                 };
 
-                                let value = dir_entry_dict(filename, &metadata, &name_tag)?;
+                                let value = dir_entry_dict(filename, &metadata, &name_tag, full)?;
                                 yield ReturnSuccess::value(value);
                             }
                         }
@@ -175,7 +179,7 @@ impl Shell for FilesystemShell {
                             Path::new(&entry)
                         };
 
-                        if let Ok(value) = dir_entry_dict(filename, &metadata, &name_tag) {
+                        if let Ok(value) = dir_entry_dict(filename, &metadata, &name_tag, full) {
                             yield ReturnSuccess::value(value);
                         }
                     }
@@ -1097,8 +1101,8 @@ impl Shell for FilesystemShell {
 
         let mut stream = VecDeque::new();
         stream.push_back(ReturnSuccess::value(
-            Value::Primitive(Primitive::String(p.to_string_lossy().to_string()))
-                .tagged(&args.call_info.name_tag),
+            UntaggedValue::Primitive(Primitive::String(p.to_string_lossy().to_string()))
+                .into_value(&args.call_info.name_tag),
         ));
 
         Ok(stream.into())

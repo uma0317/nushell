@@ -3,11 +3,12 @@ use crate::commands::cp::CopyArgs;
 use crate::commands::mkdir::MkdirArgs;
 use crate::commands::mv::MoveArgs;
 use crate::commands::rm::RemoveArgs;
-use crate::errors::ShellError;
 use crate::prelude::*;
 use crate::shell::filesystem_shell::FilesystemShell;
 use crate::shell::shell::Shell;
 use crate::stream::OutputStream;
+use nu_errors::ShellError;
+use nu_source::Tagged;
 use std::error::Error;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -127,10 +128,11 @@ impl ShellManager {
         &self,
         path: Option<Tagged<PathBuf>>,
         context: &RunnableContext,
+        full: bool,
     ) -> Result<OutputStream, ShellError> {
         let env = self.shells.lock().unwrap();
 
-        env[self.current_shell()].ls(path, context)
+        env[self.current_shell()].ls(path, context, full)
     }
 
     pub fn cd(&self, args: EvaluatedWholeStreamCommandArgs) -> Result<OutputStream, ShellError> {

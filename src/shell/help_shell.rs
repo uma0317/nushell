@@ -6,13 +6,16 @@ use crate::commands::rm::RemoveArgs;
 use crate::data::{command_dict, TaggedDictBuilder};
 use crate::prelude::*;
 use crate::shell::shell::Shell;
+use nu_errors::ShellError;
+use nu_protocol::{Primitive, ReturnSuccess, ShellTypeName, UntaggedValue, Value};
+use nu_source::Tagged;
 use std::ffi::OsStr;
 use std::path::PathBuf;
 
 #[derive(Clone, Debug)]
 pub struct HelpShell {
     pub(crate) path: String,
-    pub(crate) value: Tagged<Value>,
+    pub(crate) value: Value,
 }
 
 impl HelpShell {
@@ -24,32 +27,36 @@ impl HelpShell {
             let mut spec = TaggedDictBuilder::new(Tag::unknown());
             let value = command_dict(registry.get_command(&cmd).unwrap(), Tag::unknown());
 
-            spec.insert("name", cmd);
-            spec.insert(
+            spec.insert_untagged("name", cmd);
+            spec.insert_untagged(
                 "description",
-                value.get_data_by_key("usage").unwrap().as_string().unwrap(),
+                value
+                    .get_data_by_key("usage".spanned_unknown())
+                    .unwrap()
+                    .as_string()
+                    .unwrap(),
             );
-            spec.insert_tagged("details", value);
+            spec.insert_value("details", value);
 
-            specs.push(spec.into_tagged_value());
+            specs.push(spec.into_value());
         }
 
-        cmds.insert("help", Value::Table(specs));
+        cmds.insert_untagged("help", UntaggedValue::Table(specs));
 
         Ok(HelpShell {
             path: "/help".to_string(),
-            value: cmds.into_tagged_value(),
+            value: cmds.into_value(),
         })
     }
 
     pub fn for_command(
-        cmd: Tagged<Value>,
+        cmd: Value,
         registry: &CommandRegistry,
     ) -> Result<HelpShell, std::io::Error> {
         let mut sh = HelpShell::index(&registry)?;
 
-        if let Tagged {
-            item: Value::Primitive(Primitive::String(name)),
+        if let Value {
+            value: UntaggedValue::Primitive(Primitive::String(name)),
             ..
         } = cmd
         {
@@ -59,7 +66,7 @@ impl HelpShell {
         Ok(sh)
     }
 
-    fn commands(&self) -> VecDeque<Tagged<Value>> {
+    fn commands(&self) -> VecDeque<Value> {
         let mut cmds = VecDeque::new();
         let full_path = PathBuf::from(&self.path);
 
@@ -70,7 +77,7 @@ impl HelpShell {
         for p in full_path.iter() {
             match p {
                 x if x == sep => {}
-                step => match viewed.get_data_by_key(step.to_str().unwrap()) {
+                step => match viewed.get_data_by_key(step.to_str().unwrap().spanned_unknown()) {
                     Some(v) => {
                         viewed = v.clone();
                     }
@@ -79,8 +86,8 @@ impl HelpShell {
             }
         }
         match viewed {
-            Tagged {
-                item: Value::Table(l),
+            Value {
+                value: UntaggedValue::Table(l),
                 ..
             } => {
                 for item in l {
@@ -103,7 +110,7 @@ impl Shell for HelpShell {
             "{}",
             match anchor_name {
                 Some(x) => format!("{{{}}}", x),
-                None => format!("<{}>", self.value.item.type_name(),),
+                None => format!("<{}>", self.value.type_name()),
             }
         )
     }
@@ -129,6 +136,7 @@ impl Shell for HelpShell {
         &self,
         _pattern: Option<Tagged<PathBuf>>,
         _context: &RunnableContext,
+        _full: bool,
     ) -> Result<OutputStream, ShellError> {
         Ok(self
             .commands()
@@ -192,8 +200,8 @@ impl Shell for HelpShell {
         let commands = self.commands();
         for cmd in commands {
             match cmd {
-                Tagged { item, .. } => {
-                    for desc in item.data_descriptors() {
+                Value { value, .. } => {
+                    for desc in value.data_descriptors() {
                         possible_completion.push(desc);
                     }
                 }

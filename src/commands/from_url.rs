@@ -1,6 +1,9 @@
 use crate::commands::WholeStreamCommand;
-use crate::data::{Primitive, TaggedDictBuilder, Value};
+use crate::data::value;
+use crate::data::TaggedDictBuilder;
 use crate::prelude::*;
+use nu_errors::ShellError;
+use nu_protocol::{ReturnSuccess, Signature, Value};
 
 pub struct FromURL;
 
@@ -29,29 +32,28 @@ impl WholeStreamCommand for FromURL {
 fn from_url(args: CommandArgs, registry: &CommandRegistry) -> Result<OutputStream, ShellError> {
     let args = args.evaluate_once(registry)?;
     let tag = args.name_tag();
+    let name_span = tag.span;
     let input = args.input;
 
     let stream = async_stream! {
-        let values: Vec<Tagged<Value>> = input.values.collect().await;
+        let values: Vec<Value> = input.values.collect().await;
 
         let mut concat_string = String::new();
         let mut latest_tag: Option<Tag> = None;
 
         for value in values {
-            let value_tag = value.tag();
-            latest_tag = Some(value_tag.clone());
-            match value.item {
-                Value::Primitive(Primitive::String(s)) => {
-                    concat_string.push_str(&s);
-                }
-                _ => yield Err(ShellError::labeled_error_with_secondary(
+            latest_tag = Some(value.tag.clone());
+            let value_span = value.tag.span;
+            if let Ok(s) = value.as_string() {
+                concat_string.push_str(&s);
+            } else {
+                yield Err(ShellError::labeled_error_with_secondary(
                     "Expected a string from pipeline",
                     "requires string input",
-                    &tag,
+                    name_span,
                     "value originates from here",
-                    &value_tag,
-                )),
-
+                    value_span,
+                ))
             }
         }
 
@@ -62,10 +64,10 @@ fn from_url(args: CommandArgs, registry: &CommandRegistry) -> Result<OutputStrea
                 let mut row = TaggedDictBuilder::new(tag);
 
                 for (k,v) in result {
-                    row.insert(k, Value::string(v));
+                    row.insert_untagged(k, value::string(v));
                 }
 
-                yield ReturnSuccess::value(row.into_tagged_value());
+                yield ReturnSuccess::value(row.into_value());
             }
             _ => {
                 if let Some(last_tag) = latest_tag {

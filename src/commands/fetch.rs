@@ -1,15 +1,14 @@
 use crate::commands::UnevaluatedCallInfo;
-use crate::context::AnchorLocation;
-use crate::data::meta::Span;
-use crate::data::Value;
-use crate::errors::ShellError;
-use crate::parser::hir::SyntaxShape;
-use crate::parser::registry::Signature;
+use crate::data::value;
 use crate::prelude::*;
 use mime::Mime;
+use nu_errors::ShellError;
+use nu_protocol::{CallInfo, ReturnSuccess, Signature, SyntaxShape, UntaggedValue, Value};
+use nu_source::{AnchorLocation, Span};
 use std::path::PathBuf;
 use std::str::FromStr;
 use surf::mime;
+
 pub struct Fetch;
 
 impl PerItemCommand for Fetch {
@@ -36,7 +35,7 @@ impl PerItemCommand for Fetch {
         call_info: &CallInfo,
         registry: &CommandRegistry,
         raw_args: &RawCommandArgs,
-        _input: Tagged<Value>,
+        _input: Value,
     ) -> Result<OutputStream, ShellError> {
         run(call_info, registry, raw_args)
     }
@@ -81,7 +80,7 @@ fn run(
             file_extension.or(path_str.split('.').last().map(String::from))
         };
 
-        let tagged_contents = contents.tagged(&contents_tag);
+        let tagged_contents = contents.retag(&contents_tag);
 
         if let Some(extension) = file_extension {
             let command_name = format!("from-{}", extension);
@@ -91,10 +90,11 @@ fn run(
                     ctrl_c: raw_args.ctrl_c,
                     shell_manager: raw_args.shell_manager,
                     call_info: UnevaluatedCallInfo {
-                        args: crate::parser::hir::Call {
+                        args: nu_parser::hir::Call {
                             head: raw_args.call_info.args.head,
                             positional: None,
-                            named: None
+                            named: None,
+                            span: Span::unknown()
                         },
                         source: raw_args.call_info.source,
                         name_tag: raw_args.call_info.name_tag,
@@ -104,13 +104,13 @@ fn run(
                 let result_vec: Vec<Result<ReturnSuccess, ShellError>> = result.drain_vec().await;
                 for res in result_vec {
                     match res {
-                        Ok(ReturnSuccess::Value(Tagged { item: Value::Table(list), ..})) => {
+                        Ok(ReturnSuccess::Value(Value { value: UntaggedValue::Table(list), ..})) => {
                             for l in list {
                                 yield Ok(ReturnSuccess::Value(l));
                             }
                         }
-                        Ok(ReturnSuccess::Value(Tagged { item, .. })) => {
-                            yield Ok(ReturnSuccess::Value(Tagged { item, tag: contents_tag.clone() }));
+                        Ok(ReturnSuccess::Value(Value { value, .. })) => {
+                            yield Ok(ReturnSuccess::Value(value.into_value(contents_tag.clone())));
                         }
                         x => yield x,
                     }
@@ -126,7 +126,10 @@ fn run(
     Ok(stream.to_output_stream())
 }
 
-pub async fn fetch(location: &str, span: Span) -> Result<(Option<String>, Value, Tag), ShellError> {
+pub async fn fetch(
+    location: &str,
+    span: Span,
+) -> Result<(Option<String>, UntaggedValue, Tag), ShellError> {
     if let Err(_) = url::Url::parse(location) {
         return Err(ShellError::labeled_error(
             "Incomplete or incorrect url",
@@ -143,7 +146,7 @@ pub async fn fetch(location: &str, span: Span) -> Result<(Option<String>, Value,
                 match (content_type.type_(), content_type.subtype()) {
                     (mime::APPLICATION, mime::XML) => Ok((
                         Some("xml".to_string()),
-                        Value::string(r.body_string().await.map_err(|_| {
+                        value::string(r.body_string().await.map_err(|_| {
                             ShellError::labeled_error(
                                 "Could not load text from remote url",
                                 "could not load",
@@ -157,7 +160,7 @@ pub async fn fetch(location: &str, span: Span) -> Result<(Option<String>, Value,
                     )),
                     (mime::APPLICATION, mime::JSON) => Ok((
                         Some("json".to_string()),
-                        Value::string(r.body_string().await.map_err(|_| {
+                        value::string(r.body_string().await.map_err(|_| {
                             ShellError::labeled_error(
                                 "Could not load text from remote url",
                                 "could not load",
@@ -179,7 +182,7 @@ pub async fn fetch(location: &str, span: Span) -> Result<(Option<String>, Value,
                         })?;
                         Ok((
                             None,
-                            Value::binary(buf),
+                            value::binary(buf),
                             Tag {
                                 span,
                                 anchor: Some(AnchorLocation::Url(location.to_string())),
@@ -188,7 +191,7 @@ pub async fn fetch(location: &str, span: Span) -> Result<(Option<String>, Value,
                     }
                     (mime::IMAGE, mime::SVG) => Ok((
                         Some("svg".to_string()),
-                        Value::string(r.body_string().await.map_err(|_| {
+                        value::string(r.body_string().await.map_err(|_| {
                             ShellError::labeled_error(
                                 "Could not load svg from remote url",
                                 "could not load",
@@ -210,7 +213,7 @@ pub async fn fetch(location: &str, span: Span) -> Result<(Option<String>, Value,
                         })?;
                         Ok((
                             Some(image_ty.to_string()),
-                            Value::binary(buf),
+                            value::binary(buf),
                             Tag {
                                 span,
                                 anchor: Some(AnchorLocation::Url(location.to_string())),
@@ -219,7 +222,7 @@ pub async fn fetch(location: &str, span: Span) -> Result<(Option<String>, Value,
                     }
                     (mime::TEXT, mime::HTML) => Ok((
                         Some("html".to_string()),
-                        Value::string(r.body_string().await.map_err(|_| {
+                        value::string(r.body_string().await.map_err(|_| {
                             ShellError::labeled_error(
                                 "Could not load text from remote url",
                                 "could not load",
@@ -245,7 +248,7 @@ pub async fn fetch(location: &str, span: Span) -> Result<(Option<String>, Value,
 
                         Ok((
                             path_extension,
-                            Value::string(r.body_string().await.map_err(|_| {
+                            value::string(r.body_string().await.map_err(|_| {
                                 ShellError::labeled_error(
                                     "Could not load text from remote url",
                                     "could not load",
@@ -260,7 +263,7 @@ pub async fn fetch(location: &str, span: Span) -> Result<(Option<String>, Value,
                     }
                     (ty, sub_ty) => Ok((
                         None,
-                        Value::string(format!("Not yet supported MIME type: {} {}", ty, sub_ty)),
+                        value::string(format!("Not yet supported MIME type: {} {}", ty, sub_ty)),
                         Tag {
                             span,
                             anchor: Some(AnchorLocation::Url(location.to_string())),
@@ -270,7 +273,7 @@ pub async fn fetch(location: &str, span: Span) -> Result<(Option<String>, Value,
             }
             None => Ok((
                 None,
-                Value::string(format!("No content type found")),
+                value::string(format!("No content type found")),
                 Tag {
                     span,
                     anchor: Some(AnchorLocation::Url(location.to_string())),

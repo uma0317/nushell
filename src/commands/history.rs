@@ -1,8 +1,9 @@
 use crate::cli::History as HistoryFile;
 use crate::commands::PerItemCommand;
-use crate::errors::ShellError;
-use crate::parser::registry::{self};
+use crate::data::value;
 use crate::prelude::*;
+use nu_errors::ShellError;
+use nu_protocol::{CallInfo, ReturnSuccess, Signature, Value};
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 
@@ -13,7 +14,7 @@ impl PerItemCommand for History {
         "history"
     }
 
-    fn signature(&self) -> registry::Signature {
+    fn signature(&self) -> Signature {
         Signature::build("history")
     }
 
@@ -26,7 +27,7 @@ impl PerItemCommand for History {
         call_info: &CallInfo,
         _registry: &CommandRegistry,
         _raw_args: &RawCommandArgs,
-        _input: Tagged<Value>,
+        _input: Value,
     ) -> Result<OutputStream, ShellError> {
         let tag = call_info.name_tag.clone();
 
@@ -37,7 +38,7 @@ impl PerItemCommand for History {
                 let reader = BufReader::new(file);
                 for line in reader.lines() {
                     if let Ok(line) = line {
-                        yield ReturnSuccess::value(Value::string(line).tagged(tag.clone()));
+                        yield ReturnSuccess::value(value::string(line).into_value(tag.clone()));
                     }
                 }
             } else {

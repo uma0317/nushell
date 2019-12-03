@@ -1,8 +1,13 @@
 use crate::commands::WholeStreamCommand;
-use crate::errors::ShellError;
+use crate::data::value;
 use crate::prelude::*;
+use nu_errors::ShellError;
+use nu_protocol::{ReturnSuccess, Signature};
 
 pub struct Debug;
+
+#[derive(Deserialize)]
+pub struct DebugArgs {}
 
 impl WholeStreamCommand for Debug {
     fn name(&self) -> &str {
@@ -14,7 +19,7 @@ impl WholeStreamCommand for Debug {
     }
 
     fn usage(&self) -> &str {
-        "Debug input fed."
+        "Print the Rust debug representation of the values"
     }
 
     fn run(
@@ -22,18 +27,16 @@ impl WholeStreamCommand for Debug {
         args: CommandArgs,
         registry: &CommandRegistry,
     ) -> Result<OutputStream, ShellError> {
-        debug(args, registry)
+        args.process(registry, debug_value)?.run()
     }
 }
 
-pub fn debug(args: CommandArgs, _registry: &CommandRegistry) -> Result<OutputStream, ShellError> {
-    let input = args.input;
-
+fn debug_value(
+    _args: DebugArgs,
+    RunnableContext { input, .. }: RunnableContext,
+) -> Result<impl ToOutputStream, ShellError> {
     Ok(input
         .values
-        .map(|v| {
-            println!("{:?}", v);
-            ReturnSuccess::value(v)
-        })
+        .map(|v| ReturnSuccess::value(value::string(format!("{:?}", v)).into_untagged_value()))
         .to_output_stream())
 }

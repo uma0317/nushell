@@ -1,7 +1,8 @@
 #[macro_use]
 pub(crate) mod macros;
 
-mod from_structured_data;
+mod from_delimited_data;
+mod to_delimited_data;
 
 pub(crate) mod append;
 pub(crate) mod args;
@@ -10,11 +11,13 @@ pub(crate) mod cd;
 pub(crate) mod classified;
 pub(crate) mod clip;
 pub(crate) mod command;
+pub(crate) mod compact;
 pub(crate) mod config;
 pub(crate) mod count;
 pub(crate) mod cp;
 pub(crate) mod date;
 pub(crate) mod debug;
+pub(crate) mod default;
 pub(crate) mod echo;
 pub(crate) mod enter;
 pub(crate) mod env;
@@ -32,6 +35,7 @@ pub(crate) mod from_ssv;
 pub(crate) mod from_toml;
 pub(crate) mod from_tsv;
 pub(crate) mod from_url;
+pub(crate) mod from_xlsx;
 pub(crate) mod from_xml;
 pub(crate) mod from_yaml;
 pub(crate) mod get;
@@ -83,6 +87,7 @@ pub(crate) mod to_url;
 pub(crate) mod to_yaml;
 pub(crate) mod trim;
 pub(crate) mod version;
+pub(crate) mod what;
 pub(crate) mod where_;
 pub(crate) mod which_;
 
@@ -94,12 +99,13 @@ pub(crate) use command::{
 };
 
 pub(crate) use append::Append;
-pub(crate) use classified::ClassifiedCommand;
+pub(crate) use compact::Compact;
 pub(crate) use config::Config;
 pub(crate) use count::Count;
 pub(crate) use cp::Cpy;
 pub(crate) use date::Date;
 pub(crate) use debug::Debug;
+pub(crate) use default::Default;
 pub(crate) use echo::Echo;
 pub(crate) use enter::Enter;
 pub(crate) use env::Env;
@@ -118,6 +124,7 @@ pub(crate) use from_ssv::FromSSV;
 pub(crate) use from_toml::FromTOML;
 pub(crate) use from_tsv::FromTSV;
 pub(crate) use from_url::FromURL;
+pub(crate) use from_xlsx::FromXLSX;
 pub(crate) use from_xml::FromXML;
 pub(crate) use from_yaml::FromYAML;
 pub(crate) use from_yaml::FromYML;
@@ -170,5 +177,6 @@ pub(crate) use to_url::ToURL;
 pub(crate) use to_yaml::ToYAML;
 pub(crate) use trim::Trim;
 pub(crate) use version::Version;
+pub(crate) use what::What;
 pub(crate) use where_::Where;
 pub(crate) use which_::Which;

@@ -1,8 +1,11 @@
 use crate::commands::WholeStreamCommand;
-use crate::data::{TaggedDictBuilder, TaggedListBuilder};
-use crate::errors::ShellError;
+use crate::data::base::property_get::get_data_by_key;
+use crate::data::{value, TaggedDictBuilder, TaggedListBuilder};
 use crate::prelude::*;
 use chrono::{DateTime, NaiveDate, Utc};
+use nu_errors::ShellError;
+use nu_protocol::{Primitive, ReturnSuccess, Signature, SyntaxShape, UntaggedValue, Value};
+use nu_source::Tagged;
 
 pub struct TSortBy;
 
@@ -57,7 +60,7 @@ fn t_sort_by(
     RunnableContext { input, name, .. }: RunnableContext,
 ) -> Result<OutputStream, ShellError> {
     Ok(OutputStream::new(async_stream! {
-        let values: Vec<Tagged<Value>> = input.values.collect().await;
+        let values: Vec<Value> = input.values.collect().await;
 
         let column_grouped_by_name = if let Some(grouped_by) = group_by {
             Some(grouped_by.item().clone())
@@ -66,8 +69,8 @@ fn t_sort_by(
         };
 
         if show_columns {
-            for label in columns_sorted(column_grouped_by_name, &values[0], &name).iter() {
-                 yield ReturnSuccess::value(label.clone());
+            for label in columns_sorted(column_grouped_by_name, &values[0], &name).into_iter() {
+                 yield ReturnSuccess::value(value::string(label.item).into_value(label.tag));
             }
         } else {
             match t_sort(column_grouped_by_name, None, &values[0], name) {
@@ -80,137 +83,107 @@ fn t_sort_by(
 
 pub fn columns_sorted(
     _group_by_name: Option<String>,
-    value: &Tagged<Value>,
+    value: &Value,
     tag: impl Into<Tag>,
-) -> Vec<Tagged<Value>> {
+) -> Vec<Tagged<String>> {
     let origin_tag = tag.into();
 
     match value {
-        Tagged {
-            item: Value::Row(rows),
+        Value {
+            value: UntaggedValue::Row(rows),
             ..
         } => {
-            let mut keys: Vec<Tagged<Value>> =
-                rows.entries
-                    .keys()
-                    .map(|s| s.as_ref())
-                    .map(|k: &str| {
-                        let date = NaiveDate::parse_from_str(k, "%B %d-%Y");
+            let mut keys: Vec<Value> = rows
+                .entries
+                .keys()
+                .map(|s| s.as_ref())
+                .map(|k: &str| {
+                    let date = NaiveDate::parse_from_str(k, "%B %d-%Y");
 
-                        let date = match date {
-                            Ok(parsed) => Value::Primitive(Primitive::Date(
-                                DateTime::<Utc>::from_utc(parsed.and_hms(12, 34, 56), Utc),
-                            )),
-                            Err(_) => Value::string(k),
-                        };
+                    let date = match date {
+                        Ok(parsed) => UntaggedValue::Primitive(Primitive::Date(
+                            DateTime::<Utc>::from_utc(parsed.and_hms(12, 34, 56), Utc),
+                        )),
+                        Err(_) => value::string(k),
+                    };
 
-                        date.tagged_unknown()
-                    })
-                    .collect();
+                    date.into_untagged_value()
+                })
+                .collect();
 
             keys.sort();
 
-            let keys: Vec<Value> = keys
+            let keys: Vec<String> = keys
                 .into_iter()
-                .map(|k| {
-                    Value::string(match k {
-                        Tagged {
-                            item: Value::Primitive(Primitive::Date(d)),
-                            ..
-                        } => format!("{}", d.format("%B %d-%Y")),
-                        _ => k.as_string().unwrap(),
-                    })
+                .map(|k| match k {
+                    Value {
+                        value: UntaggedValue::Primitive(Primitive::Date(d)),
+                        ..
+                    } => format!("{}", d.format("%B %d-%Y")),
+                    _ => k.as_string().unwrap().to_string(),
                 })
                 .collect();
 
             keys.into_iter().map(|k| k.tagged(&origin_tag)).collect()
         }
-        _ => vec![Value::string("default").tagged(&origin_tag)],
+        _ => vec![format!("default").tagged(&origin_tag)],
     }
 }
 
 pub fn t_sort(
     group_by_name: Option<String>,
     split_by_name: Option<String>,
-    value: &Tagged<Value>,
+    value: &Value,
     tag: impl Into<Tag>,
-) -> Result<Tagged<Value>, ShellError> {
+) -> Result<Value, ShellError> {
     let origin_tag = tag.into();
 
     match group_by_name {
         Some(column_name) => {
-            let sorted_labels = columns_sorted(Some(column_name), value, &origin_tag);
+            let sorted_labels: Vec<Tagged<String>> =
+                columns_sorted(Some(column_name), value, &origin_tag);
 
             match split_by_name {
                 None => {
                     let mut dataset = TaggedDictBuilder::new(&origin_tag);
-                    dataset.insert_tagged("default", value.clone());
-                    let dataset = dataset.into_tagged_value();
+                    dataset.insert_value("default", value.clone());
+                    let dataset = dataset.into_value();
 
-                    let split_labels = match &dataset {
-                        Tagged {
-                            item: Value::Row(rows),
+                    let split_labels: Vec<Tagged<String>> = match &dataset {
+                        Value {
+                            value: UntaggedValue::Row(rows),
                             ..
                         } => {
-                            let mut keys: Vec<Tagged<Value>> = rows
+                            let mut keys: Vec<Tagged<String>> = rows
                                 .entries
                                 .keys()
-                                .map(|s| s.as_ref())
-                                .map(|k: &str| {
-                                    let date = NaiveDate::parse_from_str(k, "%B %d-%Y");
-
-                                    let date = match date {
-                                        Ok(parsed) => Value::Primitive(Primitive::Date(
-                                            DateTime::<Utc>::from_utc(
-                                                parsed.and_hms(12, 34, 56),
-                                                Utc,
-                                            ),
-                                        )),
-                                        Err(_) => Value::string(k),
-                                    };
-
-                                    date.tagged_unknown()
-                                })
+                                .map(|k| k.clone().tagged_unknown())
                                 .collect();
 
                             keys.sort();
 
-                            let keys: Vec<Value> = keys
-                                .into_iter()
-                                .map(|k| {
-                                    Value::string(match k {
-                                        Tagged {
-                                            item: Value::Primitive(Primitive::Date(d)),
-                                            ..
-                                        } => format!("{}", d.format("%B %d-%Y")),
-                                        _ => k.as_string().unwrap(),
-                                    })
-                                })
-                                .collect();
-
-                            keys.into_iter().map(|k| k.tagged(&origin_tag)).collect()
+                            keys
                         }
                         _ => vec![],
                     };
 
-                    let results: Vec<Vec<Tagged<Value>>> = split_labels
-                        .into_iter()
+                    let results: Vec<Vec<Value>> = split_labels
+                        .iter()
                         .map(|split| {
-                            let groups = dataset.get_data_by_key(&split.as_string().unwrap());
+                            let groups = get_data_by_key(&dataset, split.borrow_spanned());
 
                             sorted_labels
                                 .clone()
                                 .into_iter()
-                                .map(|label| {
-                                    let label = label.as_string().unwrap();
-
-                                    match groups {
-                                        Some(Tagged {
-                                            item: Value::Row(dict),
-                                            ..
-                                        }) => dict.get_data_by_key(&label).unwrap().clone(),
-                                        _ => Value::Table(vec![]).tagged(&origin_tag),
-                                    }
+                                .map(|label| match &groups {
+                                    Some(Value {
+                                        value: UntaggedValue::Row(dict),
+                                        ..
+                                    }) => dict
+                                        .get_data_by_key(label.borrow_spanned())
+                                        .unwrap()
+                                        .clone(),
+                                    _ => UntaggedValue::Table(vec![]).into_value(&origin_tag),
                                 })
                                 .collect()
                         })
@@ -219,15 +192,15 @@ pub fn t_sort(
                     let mut outer = TaggedListBuilder::new(&origin_tag);
 
                     for i in results {
-                        outer.insert_tagged(Value::Table(i).tagged(&origin_tag));
+                        outer.push_value(UntaggedValue::Table(i).into_value(&origin_tag));
                     }
 
-                    return Ok(Value::Table(outer.list).tagged(&origin_tag));
+                    return Ok(UntaggedValue::Table(outer.list).into_value(&origin_tag));
                 }
-                Some(_) => return Ok(Value::nothing().tagged(&origin_tag)),
+                Some(_) => return Ok(value::nothing().into_value(&origin_tag)),
             }
         }
-        None => return Ok(Value::nothing().tagged(&origin_tag)),
+        None => return Ok(value::nothing().into_value(&origin_tag)),
     }
 }
 #[cfg(test)]
@@ -235,28 +208,29 @@ mod tests {
 
     use crate::commands::group_by::group;
     use crate::commands::t_sort_by::{columns_sorted, t_sort};
-    use crate::data::meta::*;
-    use crate::Value;
+    use crate::data::value;
     use indexmap::IndexMap;
+    use nu_protocol::{UntaggedValue, Value};
+    use nu_source::*;
 
-    fn string(input: impl Into<String>) -> Tagged<Value> {
-        Value::string(input.into()).tagged_unknown()
+    fn string(input: impl Into<String>) -> Value {
+        value::string(input.into()).into_untagged_value()
     }
 
-    fn row(entries: IndexMap<String, Tagged<Value>>) -> Tagged<Value> {
-        Value::row(entries).tagged_unknown()
+    fn row(entries: IndexMap<String, Value>) -> Value {
+        value::row(entries).into_untagged_value()
     }
 
-    fn table(list: &Vec<Tagged<Value>>) -> Tagged<Value> {
-        Value::table(list).tagged_unknown()
+    fn table(list: &Vec<Value>) -> Value {
+        value::table(list).into_untagged_value()
     }
 
-    fn nu_releases_grouped_by_date() -> Tagged<Value> {
+    fn nu_releases_grouped_by_date() -> Value {
         let key = String::from("date").tagged_unknown();
         group(&key, nu_releases_commiters(), Tag::unknown()).unwrap()
     }
 
-    fn nu_releases_commiters() -> Vec<Tagged<Value>> {
+    fn nu_releases_commiters() -> Vec<Value> {
         vec![
             row(
                 indexmap! {"name".into() => string("AR"), "country".into() => string("EC"), "date".into() => string("August 23-2019")},
@@ -299,9 +273,9 @@ mod tests {
                 Tag::unknown()
             ),
             vec![
-                string("August 23-2019"),
-                string("September 24-2019"),
-                string("October 10-2019")
+                format!("August 23-2019").tagged_unknown(),
+                format!("September 24-2019").tagged_unknown(),
+                format!("October 10-2019").tagged_unknown()
             ]
         )
     }

@@ -1,7 +1,9 @@
 use crate::commands::WholeStreamCommand;
 use crate::data::base::reject_fields;
-use crate::errors::ShellError;
 use crate::prelude::*;
+use nu_errors::ShellError;
+use nu_protocol::{Signature, SyntaxShape};
+use nu_source::Tagged;
 
 #[derive(Deserialize)]
 pub struct RejectArgs {
@@ -48,7 +50,7 @@ fn reject(
 
     let stream = input
         .values
-        .map(move |item| reject_fields(&item, &fields, item.tag()).into_tagged_value());
+        .map(move |item| reject_fields(&item, &fields, &item.tag));
 
     Ok(stream.from_input_stream())
 }

@@ -1,95 +1,60 @@
-use crate::data::{Primitive, Value};
 use crate::prelude::*;
 use derive_new::new;
 use indexmap::IndexMap;
-use serde::{Deserialize, Serialize};
-use std::cmp::{Ordering, PartialOrd};
-use std::fmt;
+use nu_protocol::{Dictionary, Primitive, UntaggedValue, Value};
+use nu_source::{b, PrettyDebug, Spanned};
 
-#[derive(Debug, Default, Eq, PartialEq, Serialize, Deserialize, Clone, new)]
-pub struct Dictionary {
-    pub entries: IndexMap<String, Tagged<Value>>,
+#[derive(Debug, new)]
+struct DebugEntry<'a> {
+    key: &'a str,
+    value: &'a Value,
 }
 
-impl PartialOrd for Dictionary {
-    fn partial_cmp(&self, other: &Dictionary) -> Option<Ordering> {
-        let this: Vec<&String> = self.entries.keys().collect();
-        let that: Vec<&String> = other.entries.keys().collect();
-
-        if this != that {
-            return this.partial_cmp(&that);
-        }
-
-        let this: Vec<&Value> = self.entries.values().map(|v| v.item()).collect();
-        let that: Vec<&Value> = self.entries.values().map(|v| v.item()).collect();
-
-        this.partial_cmp(&that)
+impl<'a> PrettyDebug for DebugEntry<'a> {
+    fn pretty(&self) -> DebugDocBuilder {
+        (b::key(self.key.to_string()) + b::equals() + self.value.pretty().as_value()).group()
     }
 }
 
-impl From<IndexMap<String, Tagged<Value>>> for Dictionary {
-    fn from(input: IndexMap<String, Tagged<Value>>) -> Dictionary {
-        let mut out = IndexMap::default();
+pub trait DictionaryExt {
+    fn get_data(&self, desc: &String) -> MaybeOwned<'_, Value>;
 
-        for (key, value) in input {
-            out.insert(key, value);
-        }
-
-        Dictionary::new(out)
-    }
+    fn keys(&self) -> indexmap::map::Keys<String, Value>;
+    fn get_data_by_key(&self, name: Spanned<&str>) -> Option<Value>;
+    fn get_mut_data_by_key(&mut self, name: &str) -> Option<&mut Value>;
+    fn insert_data_at_key(&mut self, name: &str, value: Value);
 }
 
-impl Ord for Dictionary {
-    fn cmp(&self, other: &Dictionary) -> Ordering {
-        let this: Vec<&String> = self.entries.keys().collect();
-        let that: Vec<&String> = other.entries.keys().collect();
-
-        if this != that {
-            return this.cmp(&that);
-        }
-
-        let this: Vec<&Value> = self.entries.values().map(|v| v.item()).collect();
-        let that: Vec<&Value> = self.entries.values().map(|v| v.item()).collect();
-
-        this.cmp(&that)
-    }
-}
-
-impl PartialOrd<Value> for Dictionary {
-    fn partial_cmp(&self, _other: &Value) -> Option<Ordering> {
-        Some(Ordering::Less)
-    }
-}
-
-impl PartialEq<Value> for Dictionary {
-    fn eq(&self, other: &Value) -> bool {
-        match other {
-            Value::Row(d) => self == d,
-            _ => false,
-        }
-    }
-}
-
-impl Dictionary {
-    pub fn get_data(&self, desc: &String) -> MaybeOwned<'_, Value> {
+impl DictionaryExt for Dictionary {
+    fn get_data(&self, desc: &String) -> MaybeOwned<'_, Value> {
         match self.entries.get(desc) {
             Some(v) => MaybeOwned::Borrowed(v),
-            None => MaybeOwned::Owned(Value::Primitive(Primitive::Nothing)),
+            None => MaybeOwned::Owned(
+                UntaggedValue::Primitive(Primitive::Nothing).into_untagged_value(),
+            ),
         }
     }
 
-    pub(crate) fn get_data_by_key(&self, name: &str) -> Option<&Tagged<Value>> {
-        match self
+    fn keys(&self) -> indexmap::map::Keys<String, Value> {
+        self.entries.keys()
+    }
+
+    fn get_data_by_key(&self, name: Spanned<&str>) -> Option<Value> {
+        let result = self
             .entries
             .iter()
-            .find(|(desc_name, _)| *desc_name == name)
-        {
-            Some((_, v)) => Some(v),
-            None => None,
-        }
+            .find(|(desc_name, _)| *desc_name == name.item)?
+            .1;
+
+        Some(
+            result
+                .value
+                .clone()
+                .into_value(Tag::new(result.anchor(), name.span)),
+        )
     }
 
-    pub(crate) fn get_mut_data_by_key(&mut self, name: &str) -> Option<&mut Tagged<Value>> {
+    fn get_mut_data_by_key(&mut self, name: &str) -> Option<&mut Value> {
         match self
             .entries
             .iter_mut()
@@ -100,21 +65,15 @@ impl Dictionary {
         }
     }
 
-    pub(crate) fn debug(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let mut debug = f.debug_struct("Dictionary");
-
-        for (desc, value) in self.entries.iter() {
-            debug.field(desc, &value.debug());
-        }
-
-        debug.finish()
+    fn insert_data_at_key(&mut self, name: &str, value: Value) {
+        self.entries.insert(name.to_string(), value);
     }
 }
 
 #[derive(Debug)]
 pub struct TaggedListBuilder {
     tag: Tag,
-    pub list: Vec<Tagged<Value>>,
+    pub list: Vec<Value>,
 }
 
 impl TaggedListBuilder {
@@ -125,29 +84,33 @@ impl TaggedListBuilder {
         }
     }
 
-    pub fn push(&mut self, value: impl Into<Value>) {
-        self.list.push(value.into().tagged(&self.tag));
-    }
-
-    pub fn insert_tagged(&mut self, value: impl Into<Tagged<Value>>) {
+    pub fn push_value(&mut self, value: impl Into<Value>) {
         self.list.push(value.into());
     }
 
-    pub fn into_tagged_value(self) -> Tagged<Value> {
-        Value::Table(self.list).tagged(self.tag)
+    pub fn push_untagged(&mut self, value: impl Into<UntaggedValue>) {
+        self.list.push(value.into().into_value(self.tag.clone()));
+    }
+
+    pub fn into_value(self) -> Value {
+        UntaggedValue::Table(self.list).into_value(self.tag)
+    }
+
+    pub fn into_untagged_value(self) -> UntaggedValue {
+        UntaggedValue::Table(self.list).into_value(self.tag).value
     }
 }
 
-impl From<TaggedListBuilder> for Tagged<Value> {
-    fn from(input: TaggedListBuilder) -> Tagged<Value> {
-        input.into_tagged_value()
+impl From<TaggedListBuilder> for Value {
+    fn from(input: TaggedListBuilder) -> Value {
+        input.into_value()
     }
 }
 
 #[derive(Debug)]
 pub struct TaggedDictBuilder {
     tag: Tag,
-    dict: IndexMap<String, Tagged<Value>>,
+    dict: IndexMap<String, Value>,
 }
 
 impl TaggedDictBuilder {
@@ -158,6 +121,12 @@ impl TaggedDictBuilder {
         }
     }
 
+    pub fn build(tag: impl Into<Tag>, block: impl FnOnce(&mut TaggedDictBuilder)) -> Value {
+        let mut builder = TaggedDictBuilder::new(tag);
+        block(&mut builder);
+        builder.into_value()
+    }
+
     pub fn with_capacity(tag: impl Into<Tag>, n: usize) -> TaggedDictBuilder {
         TaggedDictBuilder {
             tag: tag.into(),
@@ -165,20 +134,22 @@ impl TaggedDictBuilder {
         }
     }
 
-    pub fn insert(&mut self, key: impl Into<String>, value: impl Into<Value>) {
-        self.dict.insert(key.into(), value.into().tagged(&self.tag));
+    pub fn insert_untagged(&mut self, key: impl Into<String>, value: impl Into<UntaggedValue>) {
+        self.dict
+            .insert(key.into(), value.into().into_value(&self.tag));
     }
 
-    pub fn insert_tagged(&mut self, key: impl Into<String>, value: impl Into<Tagged<Value>>) {
+    pub fn insert_value(&mut self, key: impl Into<String>, value: impl Into<Value>) {
         self.dict.insert(key.into(), value.into());
     }
 
-    pub fn into_tagged_value(self) -> Tagged<Value> {
-        self.into_tagged_dict().map(Value::Row)
+    pub fn into_value(self) -> Value {
+        let tag = self.tag.clone();
+        self.into_untagged_value().into_value(tag)
     }
 
-    pub fn into_tagged_dict(self) -> Tagged<Dictionary> {
-        Dictionary { entries: self.dict }.tagged(self.tag)
+    pub fn into_untagged_value(self) -> UntaggedValue {
+        UntaggedValue::Row(Dictionary { entries: self.dict })
     }
 
     pub fn is_empty(&self) -> bool {
@@ -186,8 +157,8 @@ impl TaggedDictBuilder {
     }
 }
 
-impl From<TaggedDictBuilder> for Tagged<Value> {
-    fn from(input: TaggedDictBuilder) -> Tagged<Value> {
-        input.into_tagged_value()
+impl From<TaggedDictBuilder> for Value {
+    fn from(input: TaggedDictBuilder) -> Value {
+        input.into_value()
     }
 }

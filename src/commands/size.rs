@@ -1,7 +1,8 @@
 use crate::commands::WholeStreamCommand;
-use crate::data::{TaggedDictBuilder, Value};
-use crate::errors::ShellError;
+use crate::data::{value, TaggedDictBuilder};
 use crate::prelude::*;
+use nu_errors::ShellError;
+use nu_protocol::{ReturnSuccess, Signature, Value};
 
 pub struct Size;
 
@@ -30,22 +31,27 @@ impl WholeStreamCommand for Size {
 fn size(args: CommandArgs, _registry: &CommandRegistry) -> Result<OutputStream, ShellError> {
     let input = args.input;
     let tag = args.call_info.name_tag;
+    let name_span = tag.span;
+
     Ok(input
         .values
-        .map(move |v| match v.item {
-            Value::Primitive(Primitive::String(ref s)) => ReturnSuccess::value(count(s, v.tag())),
-            _ => Err(ShellError::labeled_error_with_secondary(
-                "Expected a string from pipeline",
-                "requires string input",
-                &tag,
-                "value originates from here",
-                v.tag(),
-            )),
+        .map(move |v| {
+            if let Ok(s) = v.as_string() {
+                ReturnSuccess::value(count(&s, &v.tag))
+            } else {
+                Err(ShellError::labeled_error_with_secondary(
+                    "Expected a string from pipeline",
+                    "requires string input",
+                    name_span,
+                    "value originates from here",
+                    v.tag.span,
+                ))
+            }
         })
         .to_output_stream())
 }
 
-fn count(contents: &str, tag: impl Into<Tag>) -> Tagged<Value> {
+fn count(contents: &str, tag: impl Into<Tag>) -> Value {
     let mut lines: i64 = 0;
     let mut words: i64 = 0;
     let mut chars: i64 = 0;
@@ -72,11 +78,11 @@ fn count(contents: &str, tag: impl Into<Tag>) -> Tagged<Value> {
 
     let mut dict = TaggedDictBuilder::new(tag);
     //TODO: add back in name when we have it in the tag
-    //dict.insert("name", Value::string(name));
-    dict.insert("lines", Value::int(lines));
-    dict.insert("words", Value::int(words));
-    dict.insert("chars", Value::int(chars));
-    dict.insert("max length", Value::int(bytes));
+    //dict.insert("name", value::string(name));
+    dict.insert_untagged("lines", value::int(lines));
+    dict.insert_untagged("words", value::int(words));
+    dict.insert_untagged("chars", value::int(chars));
+    dict.insert_untagged("max length", value::int(bytes));
 
-    dict.into_tagged_value()
+    dict.into_value()
 }

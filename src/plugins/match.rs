@@ -1,7 +1,9 @@
-use nu::{
-    serve_plugin, CallInfo, Plugin, Primitive, ReturnSuccess, ReturnValue, ShellError, Signature,
-    SyntaxShape, Tagged, Value,
+use nu::{serve_plugin, Plugin};
+use nu_errors::ShellError;
+use nu_protocol::{
+    CallInfo, Primitive, ReturnSuccess, ReturnValue, Signature, SyntaxShape, UntaggedValue, Value,
 };
+
 use regex::Regex;
 
 struct Match {
@@ -29,13 +31,13 @@ impl Plugin for Match {
     fn begin_filter(&mut self, call_info: CallInfo) -> Result<Vec<ReturnValue>, ShellError> {
         if let Some(args) = call_info.args.positional {
             match &args[0] {
-                Tagged {
-                    item: Value::Primitive(Primitive::String(s)),
+                Value {
+                    value: UntaggedValue::Primitive(Primitive::String(s)),
                     ..
                 } => {
                     self.column = s.clone();
                 }
-                Tagged { tag, .. } => {
+                Value { tag, .. } => {
                     return Err(ShellError::labeled_error(
                         "Unrecognized type in params",
                         "value",
@@ -44,13 +46,13 @@ impl Plugin for Match {
                 }
             }
             match &args[1] {
-                Tagged {
-                    item: Value::Primitive(Primitive::String(s)),
+                Value {
+                    value: UntaggedValue::Primitive(Primitive::String(s)),
                     ..
                 } => {
                     self.regex = Regex::new(s).unwrap();
                 }
-                Tagged { tag, .. } => {
+                Value { tag, .. } => {
                     return Err(ShellError::labeled_error(
                         "Unrecognized type in params",
                         "value",
@@ -62,24 +64,22 @@ impl Plugin for Match {
         Ok(vec![])
     }
 
-    fn filter(&mut self, input: Tagged<Value>) -> Result<Vec<ReturnValue>, ShellError> {
+    fn filter(&mut self, input: Value) -> Result<Vec<ReturnValue>, ShellError> {
         let flag: bool;
         match &input {
-            Tagged {
-                item: Value::Row(dict),
+            Value {
+                value: UntaggedValue::Row(dict),
                 tag,
             } => {
                 if let Some(val) = dict.entries.get(&self.column) {
-                    match val {
-                        Tagged {
-                            item: Value::Primitive(Primitive::String(s)),
-                            ..
-                        } => {
-                            flag = self.regex.is_match(s);
-                        }
-                        Tagged { tag, .. } => {
-                            return Err(ShellError::labeled_error("expected string", "value", tag));
-                        }
+                    if let Ok(s) = val.as_string() {
+                        flag = self.regex.is_match(&s);
+                    } else {
+                        return Err(ShellError::labeled_error(
+                            "expected string",
+                            "value",
+                            val.tag(),
+                        ));
                     }
                 } else {
                     return Err(ShellError::labeled_error(
@@ -89,7 +89,7 @@ impl Plugin for Match {
                     ));
                 }
             }
-            Tagged { tag, .. } => {
+            Value { tag, .. } => {
                 return Err(ShellError::labeled_error("Expected row", "value", tag));
             }
         }

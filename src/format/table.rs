@@ -1,7 +1,9 @@
-use crate::data::Value;
+use crate::data::value::{format_leaf, style_leaf};
 use crate::format::RenderView;
 use crate::prelude::*;
 use derive_new::new;
+use nu_errors::ShellError;
+use nu_protocol::{UntaggedValue, Value};
 use textwrap::fill;
 
 use prettytable::format::{FormatBuilder, LinePosition, LineSeparator};
@@ -22,7 +24,7 @@ enum TableMode {
 }
 
 impl TableView {
-    fn merge_descriptors(values: &[Tagged<Value>]) -> Vec<String> {
+    fn merge_descriptors(values: &[Value]) -> Vec<String> {
         let mut ret: Vec<String> = vec![];
         let value_column = "<value>".to_string();
         for value in values {
@@ -43,7 +45,7 @@ impl TableView {
         ret
     }
 
-    pub fn from_list(values: &[Tagged<Value>], starting_idx: usize) -> Option<TableView> {
+    pub fn from_list(values: &[Value], starting_idx: usize) -> Option<TableView> {
         if values.len() == 0 {
             return None;
         }
@@ -57,54 +59,35 @@ impl TableView {
         let mut entries = vec![];
 
         for (idx, value) in values.iter().enumerate() {
-            // let mut row: Vec<(String, &'static str)> = match value {
-            //     Tagged {
-            //         item: Value::Row(..),
-            //         ..
-            //     } => headers
-            //         .iter()
-            //         .enumerate()
-            //         .map(|(i, d)| {
-            //             let data = value.get_data(d);
-            //             return (
-            //                 data.borrow().format_leaf(Some(&headers[i])),
-            //                 data.borrow().style_leaf(),
-            //             );
-            //         })
-            //         .collect(),
-            //     x => vec![(x.format_leaf(None), x.style_leaf())],
-            // };
-
             let mut row: Vec<(String, &'static str)> = headers
                 .iter()
-                .enumerate()
-                .map(|(i, d)| {
+                .map(|d| {
                     if d == "<value>" {
                         match value {
-                            Tagged {
-                                item: Value::Row(..),
+                            Value {
+                                value: UntaggedValue::Row(..),
                                 ..
                             } => (
-                                Value::nothing().format_leaf(None),
-                                Value::nothing().style_leaf(),
+                                format_leaf(&value::nothing()).plain_string(100000),
+                                style_leaf(&value::nothing()),
                             ),
-                            _ => (value.format_leaf(None), value.style_leaf()),
+                            _ => (format_leaf(value).plain_string(100000), style_leaf(value)),
                         }
                     } else {
                         match value {
-                            Tagged {
-                                item: Value::Row(..),
+                            Value {
+                                value: UntaggedValue::Row(..),
                                 ..
                             } => {
                                 let data = value.get_data(d);
                                 (
-                                    data.borrow().format_leaf(Some(&headers[i])),
-                                    data.borrow().style_leaf(),
+                                    format_leaf(data.borrow()).plain_string(100000),
+                                    style_leaf(data.borrow()),
                                 )
                             }
                             _ => (
-                                Value::nothing().format_leaf(None),
-                                Value::nothing().style_leaf(),
+                                format_leaf(&value::nothing()).plain_string(100000),
+                                style_leaf(&value::nothing()),
                             ),
                         }
                     }

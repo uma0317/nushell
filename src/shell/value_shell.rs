@@ -6,6 +6,9 @@ use crate::commands::rm::RemoveArgs;
 use crate::prelude::*;
 use crate::shell::shell::Shell;
 use crate::utils::ValueStructure;
+use nu_errors::ShellError;
+use nu_protocol::{ReturnSuccess, ShellTypeName, UntaggedValue, Value};
+use nu_source::Tagged;
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 
@@ -13,7 +16,7 @@ use std::path::{Path, PathBuf};
 pub struct ValueShell {
     pub(crate) path: String,
     pub(crate) last_path: String,
-    pub(crate) value: Tagged<Value>,
+    pub(crate) value: Value,
 }
 
 impl std::fmt::Debug for ValueShell {
@@ -23,7 +26,7 @@ impl std::fmt::Debug for ValueShell {
 }
 
 impl ValueShell {
-    pub fn new(value: Tagged<Value>) -> ValueShell {
+    pub fn new(value: Value) -> ValueShell {
         ValueShell {
             path: "/".to_string(),
             last_path: "/".to_string(),
@@ -31,7 +34,7 @@ impl ValueShell {
         }
     }
 
-    fn members_under(&self, path: &Path) -> VecDeque<Tagged<Value>> {
+    fn members_under(&self, path: &Path) -> VecDeque<Value> {
         let mut shell_entries = VecDeque::new();
         let full_path = path.to_path_buf();
         let mut viewed = self.value.clone();
@@ -40,7 +43,7 @@ impl ValueShell {
         for p in full_path.iter() {
             match p {
                 x if x == sep => {}
-                step => match viewed.get_data_by_key(step.to_str().unwrap()) {
+                step => match viewed.get_data_by_key(step.to_str().unwrap().spanned_unknown()) {
                     Some(v) => {
                         viewed = v.clone();
                     }
@@ -49,8 +52,8 @@ impl ValueShell {
             }
         }
         match viewed {
-            Tagged {
-                item: Value::Table(l),
+            Value {
+                value: UntaggedValue::Table(l),
                 ..
             } => {
                 for item in l {
@@ -65,7 +68,7 @@ impl ValueShell {
         shell_entries
     }
 
-    fn members(&self) -> VecDeque<Tagged<Value>> {
+    fn members(&self) -> VecDeque<Value> {
         self.members_under(Path::new("."))
     }
 }
@@ -77,7 +80,7 @@ impl Shell for ValueShell {
             "{}",
             match anchor_name {
                 Some(x) => format!("{{{}}}", x),
-                None => format!("<{}>", self.value.item.type_name(),),
+                None => format!("<{}>", self.value.type_name()),
             }
         )
     }
@@ -90,6 +93,7 @@ impl Shell for ValueShell {
         &self,
         target: Option<Tagged<PathBuf>>,
         context: &RunnableContext,
+        _full: bool,
     ) -> Result<OutputStream, ShellError> {
         let mut full_path = PathBuf::from(self.path());
         let name_tag = context.name.clone();
@@ -214,7 +218,7 @@ impl Shell for ValueShell {
     fn pwd(&self, args: EvaluatedWholeStreamCommandArgs) -> Result<OutputStream, ShellError> {
         let mut stream = VecDeque::new();
         stream.push_back(ReturnSuccess::value(
-            Value::string(self.path()).tagged(&args.call_info.name_tag),
+            value::string(self.path()).into_value(&args.call_info.name_tag),
         ));
         Ok(stream.into())
     }
@@ -236,8 +240,8 @@ impl Shell for ValueShell {
         let members = self.members();
         for member in members {
             match member {
-                Tagged { item, .. } => {
-                    for desc in item.data_descriptors() {
+                Value { value, .. } => {
+                    for desc in value.data_descriptors() {
                         possible_completion.push(desc);
                     }
                 }

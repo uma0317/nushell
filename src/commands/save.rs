@@ -1,7 +1,8 @@
 use crate::commands::{UnevaluatedCallInfo, WholeStreamCommand};
-use crate::data::Value;
-use crate::errors::ShellError;
 use crate::prelude::*;
+use nu_errors::ShellError;
+use nu_protocol::{Primitive, ReturnSuccess, Signature, SyntaxShape, UntaggedValue, Value};
+use nu_source::Tagged;
 use std::path::{Path, PathBuf};
 
 pub struct Save;
@@ -11,16 +12,16 @@ macro_rules! process_string {
         let mut result_string = String::new();
         for res in $input {
             match res {
-                Tagged {
-                    item: Value::Primitive(Primitive::String(s)),
+                Value {
+                    value: UntaggedValue::Primitive(Primitive::String(s)),
                     ..
                 } => {
                     result_string.push_str(&s);
                 }
                 _ => {
                     break $scope Err(ShellError::labeled_error(
-                        "Save could not successfully save",
-                        "unexpected data during save",
+                        "Save requires string data",
+                        "consider converting data to string (see `help commands`)",
                         $name_tag,
                     ));
                 }
@@ -35,8 +36,8 @@ macro_rules! process_string_return_success {
         let mut result_string = String::new();
         for res in $result_vec {
             match res {
-                Ok(ReturnSuccess::Value(Tagged {
-                    item: Value::Primitive(Primitive::String(s)),
+                Ok(ReturnSuccess::Value(Value {
+                    value: UntaggedValue::Primitive(Primitive::String(s)),
                     ..
                 })) => {
                     result_string.push_str(&s);
@@ -59,8 +60,8 @@ macro_rules! process_binary_return_success {
         let mut result_binary: Vec<u8> = Vec::new();
         for res in $result_vec {
             match res {
-                Ok(ReturnSuccess::Value(Tagged {
-                    item: Value::Primitive(Primitive::Binary(b)),
+                Ok(ReturnSuccess::Value(Value {
+                    value: UntaggedValue::Primitive(Primitive::Binary(b)),
                     ..
                 })) => {
                     for u in b.into_iter() {
@@ -133,11 +134,11 @@ fn save(
     let name_tag = name.clone();
 
     let stream = async_stream! {
-        let input: Vec<Tagged<Value>> = input.values.collect().await;
+        let input: Vec<Value> = input.values.collect().await;
         if path.is_none() {
             // If there is no filename, check the metadata for the anchor filename
             if input.len() > 0 {
-                let anchor = input[0].anchor();
+                let anchor = input[0].tag.anchor();
                 match anchor {
                     Some(path) => match path {
                         AnchorLocation::File(file) => {
@@ -145,7 +146,7 @@ fn save(
                         }
                         _ => {
                             yield Err(ShellError::labeled_error(
-                                "Save requires a filepath (1)",
+                                "Save requires a filepath",
                                 "needs path",
                                 name_tag.clone(),
                             ));
@@ -153,7 +154,7 @@ fn save(
                     },
                     None => {
                         yield Err(ShellError::labeled_error(
-                            "Save requires a filepath (2)",
+                            "Save requires a filepath",
                             "needs path",
                             name_tag.clone(),
                         ));
@@ -161,7 +162,7 @@ fn save(
                 }
             } else {
                 yield Err(ShellError::labeled_error(
-                    "Save requires a filepath (3)",
+                    "Save requires a filepath",
                     "needs path",
                     name_tag.clone(),
                 ));
@@ -184,10 +185,11 @@ fn save(
                             ctrl_c,
                             shell_manager,
                             call_info: UnevaluatedCallInfo {
-                                args: crate::parser::hir::Call {
+                                args: nu_parser::hir::Call {
                                     head: raw_args.call_info.args.head,
                                     positional: None,
-                                    named: None
+                                    named: None,
+                                    span: Span::unknown()
                                 },
                                 source: raw_args.call_info.source,
                                 name_tag: raw_args.call_info.name_tag,
@@ -214,9 +216,9 @@ fn save(
         match content {
             Ok(save_data) => match std::fs::write(full_path, save_data) {
                 Ok(o) => o,
-                Err(e) => yield Err(ShellError::labeled_error(e.to_string(), "for command", name)),
+                Err(e) => yield Err(ShellError::labeled_error(e.to_string(), "IO error while saving", name)),
             },
-            Err(e) => yield Err(ShellError::labeled_error(e.to_string(), "for command", name)),
+            Err(e) => yield Err(e),
         }
 
     };
@@ -224,7 +226,7 @@ fn save(
     Ok(OutputStream::new(stream))
 }
 
-fn string_from(input: &Vec<Tagged<Value>>) -> String {
+fn string_from(input: &Vec<Value>) -> String {
     let mut save_data = String::new();
 
     if input.len() > 0 {

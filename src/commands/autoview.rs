@@ -1,8 +1,10 @@
 use crate::commands::{RawCommandArgs, WholeStreamCommand};
-use crate::errors::ShellError;
-use crate::parser::hir::{Expression, NamedArguments};
+use crate::data::value;
 use crate::prelude::*;
 use futures::stream::TryStreamExt;
+use nu_errors::ShellError;
+use nu_parser::hir::{Expression, NamedArguments};
+use nu_protocol::{Primitive, ReturnSuccess, Signature, UntaggedValue, Value};
 use std::sync::atomic::Ordering;
 
 pub struct Autoview;
@@ -46,7 +48,9 @@ pub fn autoview(
     Ok(OutputStream::new(async_stream! {
         let mut output_stream: OutputStream = context.input.into();
 
-        match output_stream.try_next().await {
+        let next = output_stream.try_next().await;
+
+        match next {
             Ok(Some(x)) => {
                 match output_stream.try_next().await {
                     Ok(Some(y)) => {
@@ -91,13 +95,32 @@ pub fn autoview(
 
                                 let raw = raw.clone();
 
-                                let mut command_args = raw.with_input(new_input.into());
+                                let input: Vec<Value> = new_input.into();
+
+                                if input.len() > 0 && input.iter().all(|value| value.value.is_error()) {
+                                    let first = &input[0];
+
+                                    let mut host = context.host.clone();
+                                    let mut host = match host.lock() {
+                                        Err(err) => {
+                                            errln!("Unexpected error acquiring host lock: {:?}", err);
+                                            return;
+                                        }
+                                        Ok(val) => val
+                                    };
+
+                                    crate::cli::print_err(first.value.expect_error(), &*host, &context.source);
+                                    return;
+                                }
+
+                                let mut command_args = raw.with_input(input);
                                 let mut named_args = NamedArguments::new();
                                 named_args.insert_optional("start_number", Some(Expression::number(current_idx, Tag::unknown())));
                                 command_args.call_info.args.named = Some(named_args);
 
                                 let result = table.run(command_args, &context.commands);
                                 result.collect::<Vec<_>>().await;
+
 
                                 if finished {
                                     break;
@@ -110,49 +133,86 @@ pub fn autoview(
                     _ => {
                         if let ReturnSuccess::Value(x) = x {
                             match x {
-                                Tagged {
-                                    item: Value::Primitive(Primitive::String(ref s)),
+                                Value {
+                                    value: UntaggedValue::Primitive(Primitive::String(ref s)),
                                     tag: Tag { anchor, span },
                                 } if anchor.is_some() => {
                                     if let Some(text) = text {
                                         let mut stream = VecDeque::new();
-                                        stream.push_back(Value::string(s).tagged(Tag { anchor, span }));
+                                        stream.push_back(value::string(s).into_value(Tag { anchor, span }));
                                         let result = text.run(raw.with_input(stream.into()), &context.commands);
                                         result.collect::<Vec<_>>().await;
                                     } else {
-                                        println!("{}", s);
+                                        outln!("{}", s);
                                     }
                                 }
-                                Tagged {
-                                    item: Value::Primitive(Primitive::String(s)),
+                                Value {
+                                    value: UntaggedValue::Primitive(Primitive::String(s)),
                                     ..
                                 } => {
-                                    println!("{}", s);
+                                    outln!("{}", s);
+                                }
+                                Value {
+                                    value: UntaggedValue::Primitive(Primitive::Line(ref s)),
+                                    tag: Tag { anchor, span },
+                                } if anchor.is_some() => {
+                                    if let Some(text) = text {
+                                        let mut stream = VecDeque::new();
+                                        stream.push_back(value::string(s).into_value(Tag { anchor, span }));
+                                        let result = text.run(raw.with_input(stream.into()), &context.commands);
+                                        result.collect::<Vec<_>>().await;
+                                    } else {
+                                        outln!("{}\n", s);
+                                    }
+                                }
+                                Value {
+                                    value: UntaggedValue::Primitive(Primitive::Line(s)),
+                                    ..
+                                } => {
+                                    outln!("{}\n", s);
+                                }
+                                Value {
+                                    value: UntaggedValue::Primitive(Primitive::Path(s)),
+                                    ..
+                                } => {
+                                    outln!("{}", s.display());
+                                }
+                                Value {
+                                    value: UntaggedValue::Primitive(Primitive::Int(n)),
+                                    ..
+                                } => {
+                                    outln!("{}", n);
+                                }
+                                Value {
+                                    value: UntaggedValue::Primitive(Primitive::Decimal(n)),
+                                    ..
+                                } => {
+                                    outln!("{}", n);
                                 }
 
-                                Tagged { item: Value::Primitive(Primitive::Binary(ref b)), .. } => {
+                                Value { value: UntaggedValue::Primitive(Primitive::Binary(ref b)), .. } => {
                                     if let Some(binary) = binary {
                                         let mut stream = VecDeque::new();
-                                        stream.push_back(x.clone());
+                                        stream.push_back(x);
                                         let result = binary.run(raw.with_input(stream.into()), &context.commands);
                                         result.collect::<Vec<_>>().await;
                                     } else {
                                         use pretty_hex::*;
-                                        println!("{:?}", b.hex_dump());
+                                        outln!("{:?}", b.hex_dump());
                                     }
                                 }
 
-                                Tagged { item: Value::Error(e), .. } => {
+                                Value { value: UntaggedValue::Error(e), .. } => {
                                     yield Err(e);
                                 }
-                                Tagged { item: ref item, .. } => {
+                                Value { value: ref item, .. } => {
                                     if let Some(table) = table {
                                         let mut stream = VecDeque::new();
-                                        stream.push_back(x.clone());
+                                        stream.push_back(x);
                                         let result = table.run(raw.with_input(stream.into()), &context.commands);
                                         result.collect::<Vec<_>>().await;
                                     } else {
-                                        println!("{:?}", item);
+                                        outln!("{:?}", item);
                                     }
                                 }
                             }
@@ -161,13 +221,13 @@ pub fn autoview(
                 }
             }
             _ => {
-                //println!("<no results>");
+                //outln!("<no results>");
             }
         }
 
         // Needed for async_stream to type check
         if false {
-            yield ReturnSuccess::value(Value::nothing().tagged_unknown());
+            yield ReturnSuccess::value(value::nothing().into_untagged_value());
         }
     }))
 }

@@ -1,13 +1,14 @@
-use crate::data::{Dictionary, Value};
-use crate::errors::ShellError;
 use crate::prelude::*;
 use chrono::{DateTime, Local, Utc};
+use nu_errors::ShellError;
+use nu_protocol::{Dictionary, Value};
 
 use crate::commands::WholeStreamCommand;
-use crate::parser::registry::Signature;
+use crate::data::value;
 use chrono::{Datelike, TimeZone, Timelike};
 use core::fmt::Display;
 use indexmap::IndexMap;
+use nu_protocol::{Signature, UntaggedValue};
 
 pub struct Date;
 
@@ -35,26 +36,32 @@ impl WholeStreamCommand for Date {
     }
 }
 
-pub fn date_to_value<T: TimeZone>(dt: DateTime<T>, tag: Tag) -> Tagged<Value>
+pub fn date_to_value<T: TimeZone>(dt: DateTime<T>, tag: Tag) -> Value
 where
     T::Offset: Display,
 {
     let mut indexmap = IndexMap::new();
 
-    indexmap.insert("year".to_string(), Value::int(dt.year()).tagged(&tag));
-    indexmap.insert("month".to_string(), Value::int(dt.month()).tagged(&tag));
-    indexmap.insert("day".to_string(), Value::int(dt.day()).tagged(&tag));
-    indexmap.insert("hour".to_string(), Value::int(dt.hour()).tagged(&tag));
-    indexmap.insert("minute".to_string(), Value::int(dt.minute()).tagged(&tag));
-    indexmap.insert("second".to_string(), Value::int(dt.second()).tagged(&tag));
+    indexmap.insert("year".to_string(), value::int(dt.year()).into_value(&tag));
+    indexmap.insert("month".to_string(), value::int(dt.month()).into_value(&tag));
+    indexmap.insert("day".to_string(), value::int(dt.day()).into_value(&tag));
+    indexmap.insert("hour".to_string(), value::int(dt.hour()).into_value(&tag));
+    indexmap.insert(
+        "minute".to_string(),
+        value::int(dt.minute()).into_value(&tag),
+    );
+    indexmap.insert(
+        "second".to_string(),
+        value::int(dt.second()).into_value(&tag),
+    );
 
     let tz = dt.offset();
     indexmap.insert(
         "timezone".to_string(),
-        Value::string(format!("{}", tz)).tagged(&tag),
+        value::string(format!("{}", tz)).into_value(&tag),
     );
 
-    Value::Row(Dictionary::from(indexmap)).tagged(&tag)
+    UntaggedValue::Row(Dictionary::from(indexmap)).into_value(&tag)
 }
 
 pub fn date(args: CommandArgs, registry: &CommandRegistry) -> Result<OutputStream, ShellError> {

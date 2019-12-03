@@ -1,6 +1,7 @@
-use nu::{
-    serve_plugin, CallInfo, Plugin, Primitive, ReturnSuccess, ReturnValue, ShellError, Signature,
-    SyntaxShape, Tagged, TaggedItem, Value,
+use nu::{serve_plugin, value, Plugin};
+use nu_errors::ShellError;
+use nu_protocol::{
+    CallInfo, Primitive, ReturnSuccess, ReturnValue, Signature, SyntaxShape, UntaggedValue, Value,
 };
 
 use nom::{
@@ -66,14 +67,14 @@ impl Plugin for Format {
     fn begin_filter(&mut self, call_info: CallInfo) -> Result<Vec<ReturnValue>, ShellError> {
         if let Some(args) = call_info.args.positional {
             match &args[0] {
-                Tagged {
-                    item: Value::Primitive(Primitive::String(pattern)),
+                Value {
+                    value: UntaggedValue::Primitive(Primitive::String(pattern)),
                     ..
                 } => {
                     let format_pattern = format(&pattern).unwrap();
                     self.commands = format_pattern.1
                 }
-                Tagged { tag, .. } => {
+                Value { tag, .. } => {
                     return Err(ShellError::labeled_error(
                         "Unrecognized type in params",
                         "expected a string",
@@ -85,10 +86,10 @@ impl Plugin for Format {
         Ok(vec![])
     }
 
-    fn filter(&mut self, input: Tagged<Value>) -> Result<Vec<ReturnValue>, ShellError> {
+    fn filter(&mut self, input: Value) -> Result<Vec<ReturnValue>, ShellError> {
         match &input {
-            Tagged {
-                item: Value::Row(dict),
+            Value {
+                value: UntaggedValue::Row(dict),
                 ..
             } => {
                 let mut output = String::new();
@@ -114,7 +115,7 @@ impl Plugin for Format {
                 }
 
                 return Ok(vec![ReturnSuccess::value(
-                    Value::string(output).tagged_unknown(),
+                    value::string(output).into_untagged_value(),
                 )]);
             }
             _ => {}

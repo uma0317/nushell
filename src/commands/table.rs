@@ -1,7 +1,9 @@
 use crate::commands::WholeStreamCommand;
-use crate::errors::ShellError;
+use crate::data::value;
 use crate::format::TableView;
 use crate::prelude::*;
+use nu_errors::ShellError;
+use nu_protocol::{Primitive, ReturnSuccess, Signature, SyntaxShape, UntaggedValue, Value};
 
 pub struct Table;
 
@@ -37,7 +39,7 @@ fn table(args: CommandArgs, registry: &CommandRegistry) -> Result<OutputStream, 
     let stream = async_stream! {
         let host = args.host.clone();
         let start_number = match args.get("start_number") {
-            Some(Tagged { item: Value::Primitive(Primitive::Int(i)), .. }) => {
+            Some(Value { value: UntaggedValue::Primitive(Primitive::Int(i)), .. }) => {
                 i.to_usize().unwrap()
             }
             _ => {
@@ -45,7 +47,7 @@ fn table(args: CommandArgs, registry: &CommandRegistry) -> Result<OutputStream, 
             }
         };
 
-        let input: Vec<Tagged<Value>> = args.input.into_vec().await;
+        let input: Vec<Value> = args.input.into_vec().await;
         if input.len() > 0 {
             let mut host = host.lock().unwrap();
             let view = TableView::from_list(&input, start_number);
@@ -56,7 +58,7 @@ fn table(args: CommandArgs, registry: &CommandRegistry) -> Result<OutputStream, 
         }
         // Needed for async_stream to type check
         if false {
-            yield ReturnSuccess::value(Value::nothing().tagged_unknown());
+            yield ReturnSuccess::value(value::nothing().into_value(Tag::unknown()));
         }
     };
 

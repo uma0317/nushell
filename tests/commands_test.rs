@@ -4,6 +4,125 @@ use helpers as h;
 use helpers::{Playground, Stub::*};
 
 #[test]
+fn nth_selects_a_row() {
+    Playground::setup("nth_test_1", |dirs, sandbox| {
+        sandbox.with_files(vec![EmptyFile("notes.txt"), EmptyFile("arepas.txt")]);
+
+        let actual = nu!(
+            cwd: dirs.test(), h::pipeline(
+            r#"
+                ls
+                | sort-by name
+                | nth 0
+                | get name
+                | echo $it
+            "#
+        ));
+
+        assert_eq!(actual, "arepas.txt");
+    });
+}
+
+#[test]
+fn nth_selects_many_rows() {
+    Playground::setup("nth_test_2", |dirs, sandbox| {
+        sandbox.with_files(vec![EmptyFile("notes.txt"), EmptyFile("arepas.txt")]);
+
+        let actual = nu!(
+            cwd: dirs.test(), h::pipeline(
+            r#"
+                ls
+                | get name
+                | nth 1 0
+                | count
+                | echo $it
+            "#
+        ));
+
+        assert_eq!(actual, "2");
+    });
+}
+#[test]
+fn default_row_data_if_column_missing() {
+    Playground::setup("default_test_1", |dirs, sandbox| {
+        sandbox.with_files(vec![FileWithContentToBeTrimmed(
+            "los_tres_amigos.json",
+            r#"
+                {
+                    "amigos": [
+                        {"name":   "Yehuda"},
+                        {"name": "Jonathan", "rusty_luck": 0},
+                        {"name":   "Andres", "rusty_luck": 0},
+                        {"name":"GorbyPuff"}
+                    ]
+                }
+            "#,
+        )]);
+
+        let actual = nu!(
+            cwd: dirs.test(), h::pipeline(
+            r#"
+                open los_tres_amigos.json
+                | get amigos
+                | default rusty_luck 1
+                | get rusty_luck
+                | sum
+                | echo $it
+            "#
+        ));
+
+        assert_eq!(actual, "2");
+    });
+}
+#[test]
+fn compact_rows_where_given_column_is_empty() {
+    Playground::setup("compact_test_1", |dirs, sandbox| {
+        sandbox.with_files(vec![FileWithContentToBeTrimmed(
+            "los_tres_amigos.json",
+            r#"
+                {
+                    "amigos": [
+                        {"name":   "Yehuda", "rusty_luck": 1},
+                        {"name": "Jonathan", "rusty_luck": 1},
+                        {"name":   "Andres", "rusty_luck": 1},
+                        {"name":"GorbyPuff"}
+                    ]
+                }
+            "#,
+        )]);
+
+        let actual = nu!(
+            cwd: dirs.test(), h::pipeline(
+            r#"
+                open los_tres_amigos.json
+                | get amigos
+                | compact rusty_luck
+                | count
+                | echo $it
+            "#
+        ));
+
+        assert_eq!(actual, "3");
+    });
+}
+#[test]
+fn compact_empty_rows_by_default() {
+    Playground::setup("compact_test_2", |dirs, _| {
+        let actual = nu!(
+            cwd: dirs.test(), h::pipeline(
+            r#"
+                echo "[1,2,3,14,null]"
+                | from-json
+                | compact
+                | count
+                | echo $it
+            "#
+        ));
+
+        assert_eq!(actual, "4");
+    });
+}
+#[test]
 fn group_by() {
     Playground::setup("group_by_test_1", |dirs, sandbox| {
         sandbox.with_files(vec![FileWithContentToBeTrimmed(
@@ -244,6 +363,67 @@ fn last_gets_last_row_when_no_amount_given() {
         ));
 
         assert_eq!(actual, "1");
+    })
+}
+
+#[test]
+fn get() {
+    Playground::setup("get_test_1", |dirs, sandbox| {
+        sandbox.with_files(vec![FileWithContent(
+            "sample.toml",
+            r#"
+                nu_party_venue = "zion"
+            "#,
+        )]);
+
+        let actual = nu!(
+            cwd: dirs.test(), h::pipeline(
+            r#"
+                open sample.toml
+                | get nu_party_venue
+                | echo $it
+            "#
+        ));
+
+        assert_eq!(actual, "zion");
+    })
+}
+
+#[test]
+fn get_more_than_one_member() {
+    Playground::setup("get_test_2", |dirs, sandbox| {
+        sandbox.with_files(vec![FileWithContent(
+            "sample.toml",
+            r#"
+                [[fortune_tellers]]
+                name = "Andrés N. Robalino"
+                arepas = 1
+                broken_builds = 0
+
+                [[fortune_tellers]]
+                name = "Jonathan Turner"
+                arepas = 1
+                broken_builds = 1
+
+                [[fortune_tellers]]
+                name = "Yehuda Katz"
+                arepas = 1
+                broken_builds = 1
+            "#,
+        )]);
+
+        let actual = nu!(
+            cwd: dirs.test(), h::pipeline(
+            r#"
+                open sample.toml
+                | get fortune_tellers
+                | get arepas broken_builds
+                | sum
+                | echo $it
+            "#
+        ));
+
+        assert_eq!(actual, "5");
     })
 }
 

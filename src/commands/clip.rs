@@ -2,9 +2,10 @@
 pub mod clipboard {
     use crate::commands::WholeStreamCommand;
     use crate::context::CommandRegistry;
-    use crate::errors::ShellError;
     use crate::prelude::*;
     use futures::stream::StreamExt;
+    use nu_errors::ShellError;
+    use nu_protocol::{ReturnValue, Signature, Value};
 
     use clipboard::{ClipboardContext, ClipboardProvider};
 
@@ -40,7 +41,7 @@ pub mod clipboard {
         RunnableContext { input, name, .. }: RunnableContext,
     ) -> Result<OutputStream, ShellError> {
         let stream = async_stream! {
-            let values: Vec<Tagged<Value>> = input.values.collect().await;
+            let values: Vec<Value> = input.values.collect().await;
 
             let mut clip_stream = inner_clip(values, name).await;
             while let Some(value) = clip_stream.next().await {
@@ -53,7 +54,7 @@ pub mod clipboard {
         Ok(OutputStream::from(stream))
     }
 
-    async fn inner_clip(input: Vec<Tagged<Value>>, name: Tag) -> OutputStream {
+    async fn inner_clip(input: Vec<Value>, name: Tag) -> OutputStream {
         let mut clip_context: ClipboardContext = ClipboardProvider::new().unwrap();
         let mut new_copy_data = String::new();
 
@@ -67,7 +68,7 @@ pub mod clipboard {
                 }
 
                 let string: String = match i.as_string() {
-                    Ok(string) => string,
+                    Ok(string) => string.to_string(),
                     Err(_) => {
                         return OutputStream::one(Err(ShellError::labeled_error(
                             "Given non-string data",

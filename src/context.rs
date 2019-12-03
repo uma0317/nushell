@@ -1,24 +1,38 @@
-use crate::commands::{Command, UnevaluatedCallInfo};
-use crate::parser::{hir, hir::syntax_shape::ExpandContext};
-use crate::prelude::*;
-use derive_new::new;
+use crate::commands::{command::CommandArgs, Command, UnevaluatedCallInfo};
+use crate::env::host::Host;
+use crate::shell::shell_manager::ShellManager;
+use crate::stream::{InputStream, OutputStream};
 use indexmap::IndexMap;
-use serde::{Deserialize, Serialize};
+use nu_errors::ShellError;
+use nu_parser::{hir, hir::syntax_shape::ExpandContext, hir::syntax_shape::SignatureRegistry};
+use nu_protocol::{errln, Signature};
+use nu_source::{Tag, Text};
 use std::error::Error;
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum AnchorLocation {
-    Url(String),
-    File(String),
-    Source(Text),
+#[derive(Clone)]
+pub struct CommandRegistry {
+    registry: Arc<Mutex<IndexMap<String, Arc<Command>>>>,
 }
 
-#[derive(Clone, new)]
-pub struct CommandRegistry {
-    #[new(value = "Arc::new(Mutex::new(IndexMap::default()))")]
-    registry: Arc<Mutex<IndexMap<String, Arc<Command>>>>,
+impl SignatureRegistry for CommandRegistry {
+    fn has(&self, name: &str) -> bool {
+        let registry = self.registry.lock().unwrap();
+        registry.contains_key(name)
+    }
+    fn get(&self, name: &str) -> Option<Signature> {
+        let registry = self.registry.lock().unwrap();
+        registry.get(name).map(|command| command.signature())
+    }
+}
+
+impl CommandRegistry {
+    pub fn new() -> CommandRegistry {
+        CommandRegistry {
+            registry: Arc::new(Mutex::new(IndexMap::default())),
+        }
+    }
 }
 
 impl CommandRegistry {
@@ -58,7 +72,8 @@ impl CommandRegistry {
 #[derive(Clone)]
 pub struct Context {
     registry: CommandRegistry,
-    host: Arc<Mutex<dyn Host + Send>>,
+    host: Arc<Mutex<Box<dyn Host>>>,
+    pub current_errors: Arc<Mutex<Vec<ShellError>>>,
     pub ctrl_c: Arc<AtomicBool>,
     pub(crate) shell_manager: ShellManager,
 }
@@ -72,23 +87,78 @@ impl Context {
         &'context self,
         source: &'context Text,
     ) -> ExpandContext<'context> {
-        ExpandContext::new(&self.registry, source, self.shell_manager.homedir())
+        ExpandContext::new(
+            Box::new(self.registry.clone()),
+            source,
+            self.shell_manager.homedir(),
+        )
     }
 
     pub(crate) fn basic() -> Result<Context, Box<dyn Error>> {
         let registry = CommandRegistry::new();
         Ok(Context {
             registry: registry.clone(),
-            host: Arc::new(Mutex::new(crate::env::host::BasicHost)),
+            host: Arc::new(Mutex::new(Box::new(crate::env::host::BasicHost))),
+            current_errors: Arc::new(Mutex::new(vec![])),
             ctrl_c: Arc::new(AtomicBool::new(false)),
             shell_manager: ShellManager::basic(registry)?,
         })
     }
 
-    pub(crate) fn with_host(&mut self, block: impl FnOnce(&mut dyn Host)) {
+    pub(crate) fn error(&mut self, error: ShellError) {
+        self.with_errors(|errors| errors.push(error))
+    }
+
+    pub(crate) fn maybe_print_errors(&mut self, source: Text) -> bool {
+        let errors = self.current_errors.clone();
+        let errors = errors.lock();
+
+        let host = self.host.clone();
+        let host = host.lock();
+
+        let result: bool;
+
+        match (errors, host) {
+            (Err(err), _) => {
+                errln!(
+                    "Unexpected error attempting to acquire the lock of the current errors: {:?}",
+                    err
+                );
+                result = false;
+            }
+            (_, Err(err)) => {
+                errln!(
+                    "Unexpected error attempting to acquire the lock of the current errors: {:?}",
+                    err
+                );
+                result = false;
+            }
+            (Ok(mut errors), Ok(host)) => {
+                if errors.len() > 0 {
+                    let error = errors[0].clone();
+                    *errors = vec![];
+
+                    crate::cli::print_err(error, &*host, &source);
+                    result = true;
+                } else {
+                    result = false;
+                }
+            }
+        };
+
+        result
+    }
+
+    pub(crate) fn with_host<T>(&mut self, block: impl FnOnce(&mut dyn Host) -> T) -> T {
         let mut host = self.host.lock().unwrap();
 
         block(&mut *host)
+    }
+
+    pub(crate) fn with_errors<T>(&mut self, block: impl FnOnce(&mut Vec<ShellError>) -> T) -> T {
+        let mut errors = self.current_errors.lock().unwrap();
+
+        block(&mut *errors)
     }
 
     pub fn add_commands(&mut self, commands: Vec<Arc<Command>>) {

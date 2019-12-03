@@ -1,8 +1,10 @@
 use crate::commands::WholeStreamCommand;
 use crate::context::CommandRegistry;
 use crate::data::base::select_fields;
-use crate::errors::ShellError;
 use crate::prelude::*;
+use nu_errors::ShellError;
+use nu_protocol::{Signature, SyntaxShape};
+use nu_source::Tagged;
 
 #[derive(Deserialize)]
 struct PickArgs {
@@ -49,7 +51,7 @@ fn pick(
 
     let objects = input
         .values
-        .map(move |value| select_fields(&value.item, &fields, value.tag()));
+        .map(move |value| select_fields(&value, &fields, value.tag.clone()));
 
     Ok(objects.from_input_stream())
 }

@@ -1,8 +1,8 @@
 use crate::commands::PerItemCommand;
-use crate::errors::ShellError;
-use crate::parser::hir::SyntaxShape;
-use crate::parser::registry;
+use crate::context::CommandRegistry;
 use crate::prelude::*;
+use nu_errors::ShellError;
+use nu_protocol::{CallInfo, ReturnSuccess, Scope, Signature, SyntaxShape, UntaggedValue, Value};
 
 pub struct Where;
 
@@ -11,7 +11,7 @@ impl PerItemCommand for Where {
         "where"
     }
 
-    fn signature(&self) -> registry::Signature {
+    fn signature(&self) -> Signature {
         Signature::build("where").required(
             "condition",
             SyntaxShape::Block,
@@ -26,18 +26,18 @@ impl PerItemCommand for Where {
     fn run(
         &self,
         call_info: &CallInfo,
-        _registry: &registry::CommandRegistry,
+        _registry: &CommandRegistry,
         _raw_args: &RawCommandArgs,
-        input: Tagged<Value>,
+        input: Value,
     ) -> Result<OutputStream, ShellError> {
         let input_clone = input.clone();
         let condition = call_info.args.expect_nth(0)?;
         let stream = match condition {
-            Tagged {
-                item: Value::Block(block),
+            Value {
+                value: UntaggedValue::Block(block),
                 ..
             } => {
-                let result = block.invoke(&input_clone);
+                let result = block.invoke(&Scope::new(input_clone.clone()));
                 match result {
                     Ok(v) => {
                         if v.is_true() {
@@ -49,7 +49,7 @@ impl PerItemCommand for Where {
                     Err(e) => return Err(e),
                 }
             }
-            Tagged { tag, .. } => {
+            Value { tag, .. } => {
                 return Err(ShellError::labeled_error(
                     "Expected a condition",
                     "where needs a condition",

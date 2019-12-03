@@ -1,6 +1,7 @@
-use crate::data::{TaggedDictBuilder, Value};
-use crate::errors::ShellError;
+use crate::data::TaggedDictBuilder;
 use crate::prelude::*;
+use nu_errors::ShellError;
+use nu_protocol::Value;
 
 #[derive(Debug)]
 pub enum FileType {
@@ -13,9 +14,10 @@ pub(crate) fn dir_entry_dict(
     filename: &std::path::Path,
     metadata: &std::fs::Metadata,
     tag: impl Into<Tag>,
-) -> Result<Tagged<Value>, ShellError> {
+    full: bool,
+) -> Result<Value, ShellError> {
     let mut dict = TaggedDictBuilder::new(tag);
-    dict.insert("name", Value::string(filename.to_string_lossy()));
+    dict.insert_untagged("name", value::string(filename.to_string_lossy()));
 
     let kind = if metadata.is_dir() {
         FileType::Directory
@@ -25,28 +27,38 @@ pub(crate) fn dir_entry_dict(
         FileType::Symlink
     };
 
-    dict.insert("type", Value::string(format!("{:?}", kind)));
-    dict.insert(
-        "readonly",
-        Value::boolean(metadata.permissions().readonly()),
-    );
+    dict.insert_untagged("type", value::string(format!("{:?}", kind)));
 
-    dict.insert("size", Value::bytes(metadata.len() as u64));
+    if full {
+        dict.insert_untagged(
+            "readonly",
+            value::boolean(metadata.permissions().readonly()),
+        );
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = metadata.permissions().mode();
+            dict.insert_untagged("mode", value::string(umask::Mode::from(mode).to_string()));
+        }
+    }
+
+    dict.insert_untagged("size", value::bytes(metadata.len() as u64));
 
     match metadata.created() {
-        Ok(c) => dict.insert("created", Value::system_date(c)),
+        Ok(c) => dict.insert_untagged("created", value::system_date(c)),
         Err(_) => {}
     }
 
     match metadata.accessed() {
-        Ok(a) => dict.insert("accessed", Value::system_date(a)),
+        Ok(a) => dict.insert_untagged("accessed", value::system_date(a)),
         Err(_) => {}
     }
 
     match metadata.modified() {
-        Ok(m) => dict.insert("modified", Value::system_date(m)),
+        Ok(m) => dict.insert_untagged("modified", value::system_date(m)),
         Err(_) => {}
     }
 
-    Ok(dict.into_tagged_value())
+    Ok(dict.into_value())
 }

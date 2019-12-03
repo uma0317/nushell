@@ -1,14 +1,15 @@
-use crate::commands::from_structured_data::from_structured_data;
+use crate::commands::from_delimited_data::from_delimited_data;
 use crate::commands::WholeStreamCommand;
-use crate::data::{Primitive, Value};
 use crate::prelude::*;
+use nu_errors::ShellError;
+use nu_protocol::{Primitive, Signature, SyntaxShape, UntaggedValue, Value};
 
 pub struct FromCSV;
 
 #[derive(Deserialize)]
 pub struct FromCSVArgs {
     headerless: bool,
-    separator: Option<Tagged<Value>>,
+    separator: Option<Value>,
 }
 
 impl WholeStreamCommand for FromCSV {
@@ -47,23 +48,27 @@ fn from_csv(
     runnable_context: RunnableContext,
 ) -> Result<OutputStream, ShellError> {
     let sep = match separator {
-        Some(Tagged {
-            item: Value::Primitive(Primitive::String(s)),
+        Some(Value {
+            value: UntaggedValue::Primitive(Primitive::String(s)),
             tag,
             ..
         }) => {
-            let vec_s: Vec<char> = s.chars().collect();
-            if vec_s.len() != 1 {
-                return Err(ShellError::labeled_error(
-                    "Expected a single separator char from --separator",
-                    "requires a single character string input",
-                    tag,
-                ));
-            };
-            vec_s[0]
+            if s == r"\t" {
+                '\t'
+            } else {
+                let vec_s: Vec<char> = s.chars().collect();
+                if vec_s.len() != 1 {
+                    return Err(ShellError::labeled_error(
+                        "Expected a single separator char from --separator",
+                        "requires a single character string input",
+                        tag,
+                    ));
+                };
+                vec_s[0]
+            }
         }
         _ => ',',
     };
 
-    from_structured_data(headerless, sep, "CSV", runnable_context)
+    from_delimited_data(headerless, sep, "CSV", runnable_context)
 }

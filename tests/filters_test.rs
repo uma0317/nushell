@@ -30,6 +30,7 @@ fn converts_structured_table_to_csv_text() {
             r#"
                 open csv_text_sample.txt
                 | lines
+                | trim
                 | split-column "," a b c d origin
                 | last 1
                 | to-csv
@@ -60,6 +61,7 @@ fn converts_structured_table_to_csv_text_skipping_headers_after_conversion() {
             r#"
                 open csv_text_sample.txt
                 | lines
+                | trim
                 | split-column "," a b c d origin
                 | last 1
                 | to-csv --headerless
@@ -118,6 +120,35 @@ fn converts_from_csv_text_with_separator_to_structured_table() {
             r#"
                 open los_tres_caballeros.txt
                 | from-csv --separator ';'
+                | get rusty_luck
+                | str --to-int
+                | sum
+                | echo $it
+            "#
+        ));
+
+        assert_eq!(actual, "3");
+    })
+}
+
+#[test]
+fn converts_from_csv_text_with_tab_separator_to_structured_table() {
+    Playground::setup("filter_from_csv_test_1", |dirs, sandbox| {
+        sandbox.with_files(vec![FileWithContentToBeTrimmed(
+            "los_tres_caballeros.txt",
+            r#"
+                first_name	last_name	rusty_luck
+                Andrés	Robalino	1
+                Jonathan	Turner	1
+                Yehuda	Katz	1
+            "#,
+        )]);
+
+        let actual = nu!(
+            cwd: dirs.test(), h::pipeline(
+            r#"
+                open los_tres_caballeros.txt
+                | from-csv --separator '\t'
                 | get rusty_luck
                 | str --to-int
                 | sum
@@ -262,6 +293,16 @@ fn can_convert_table_to_tsv_text_and_from_tsv_text_back_into_table() {
     let actual = nu!(
         cwd: "tests/fixtures/formats",
         "open caco3_plastics.tsv | to-tsv | from-tsv | first 1 | get origin | echo $it"
+    );
+
+    assert_eq!(actual, "SPAIN");
+}
+
+#[test]
+fn can_convert_table_to_tsv_text_and_from_tsv_text_back_into_table_using_csv_separator() {
+    let actual = nu!(
+        cwd: "tests/fixtures/formats",
+        r"open caco3_plastics.tsv | to-tsv | from-csv --separator '\t' | first 1 | get origin | echo $it"
     );
 
     assert_eq!(actual, "SPAIN");
@@ -486,13 +527,28 @@ fn can_convert_table_to_bson_and_back_into_table() {
             | to-bson
             | from-bson
             | get root
-            | nth 1
-            | get b
+            | get 1.b
             | echo $it
         "#
     ));
 
     assert_eq!(actual, "whel");
+}
+
+#[test]
+fn can_read_excel_file() {
+    let actual = nu!(
+        cwd: "tests/fixtures/formats", h::pipeline(
+        r#"
+            open sample_data.xlsx
+            | get SalesOrders
+            | nth 4
+            | get Column2
+            | echo $it
+        "#
+    ));
+
+    assert_eq!(actual, "Gill");
 }
 
 #[test]
@@ -673,8 +729,8 @@ fn can_get_reverse_first() {
 }
 
 #[test]
-fn embed() {
-    Playground::setup("embed_test", |dirs, sandbox| {
+fn embed_rows_into_a_row() {
+    Playground::setup("embed_test_1", |dirs, sandbox| {
         sandbox.with_files(vec![FileWithContentToBeTrimmed(
             "los_tres_caballeros.txt",
             r#"
@@ -699,6 +755,36 @@ fn embed() {
         ));
 
         assert_eq!(actual, "Robalino");
+    })
+}
+
+#[test]
+fn embed_rows_into_a_table() {
+    Playground::setup("embed_test_2", |dirs, sandbox| {
+        sandbox.with_files(vec![FileWithContentToBeTrimmed(
+            "los_tres_caballeros.txt",
+            r#"
+                first_name,last_name
+                Andrés,Robalino
+                Jonathan,Turner
+                Yehuda,Katz
+            "#,
+        )]);
+
+        let actual = nu!(
+            cwd: dirs.test(), h::pipeline(
+            r#"
+                open los_tres_caballeros.txt
+                | from-csv
+                | get last_name
+                | embed caballero
+                | nth 2
+                | get caballero
+                | echo $it
+            "#
+        ));
+
+        assert_eq!(actual, "Katz");
     })
 }
 

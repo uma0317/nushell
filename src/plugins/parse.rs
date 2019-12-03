@@ -1,6 +1,7 @@
-use nu::{
-    serve_plugin, CallInfo, Plugin, Primitive, ReturnSuccess, ReturnValue, ShellError, Signature,
-    SyntaxShape, Tagged, TaggedDictBuilder, Value,
+use nu::{serve_plugin, value, Plugin, TaggedDictBuilder};
+use nu_errors::ShellError;
+use nu_protocol::{
+    CallInfo, Primitive, ReturnSuccess, ReturnValue, Signature, SyntaxShape, UntaggedValue, Value,
 };
 
 use nom::{
@@ -102,8 +103,8 @@ impl Plugin for Parse {
     fn begin_filter(&mut self, call_info: CallInfo) -> Result<Vec<ReturnValue>, ShellError> {
         if let Some(args) = call_info.args.positional {
             match &args[0] {
-                Tagged {
-                    item: Value::Primitive(Primitive::String(pattern)),
+                Value {
+                    value: UntaggedValue::Primitive(Primitive::String(pattern)),
                     ..
                 } => {
                     //self.pattern = s.clone();
@@ -114,7 +115,7 @@ impl Plugin for Parse {
 
                     self.regex = Regex::new(&parse_regex).unwrap();
                 }
-                Tagged { tag, .. } => {
+                Value { tag, .. } => {
                     return Err(ShellError::labeled_error(
                         "Unrecognized type in params",
                         "expected a string",
@@ -126,26 +127,18 @@ impl Plugin for Parse {
         Ok(vec![])
     }
 
-    fn filter(&mut self, input: Tagged<Value>) -> Result<Vec<ReturnValue>, ShellError> {
+    fn filter(&mut self, input: Value) -> Result<Vec<ReturnValue>, ShellError> {
         let mut results = vec![];
-        match &input {
-            Tagged {
-                tag,
-                item: Value::Primitive(Primitive::String(s)),
-            } => {
-                //self.full_input.push_str(&s);
+        if let Ok(s) = input.as_string() {
+            for cap in self.regex.captures_iter(&s) {
+                let mut dict = TaggedDictBuilder::new(input.tag());
 
-                for cap in self.regex.captures_iter(&s) {
-                    let mut dict = TaggedDictBuilder::new(tag);
-
-                    for (idx, column_name) in self.column_names.iter().enumerate() {
-                        dict.insert(column_name, Value::string(&cap[idx + 1].to_string()));
-                    }
-
-                    results.push(ReturnSuccess::value(dict.into_tagged_value()));
+                for (idx, column_name) in self.column_names.iter().enumerate() {
+                    dict.insert_untagged(column_name, value::string(&cap[idx + 1].to_string()));
                 }
+
+                results.push(ReturnSuccess::value(dict.into_value()));
             }
-            _ => {}
         }
         Ok(results)
     }

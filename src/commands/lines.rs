@@ -1,8 +1,8 @@
 use crate::commands::WholeStreamCommand;
-use crate::data::{Primitive, Value};
-use crate::errors::ShellError;
 use crate::prelude::*;
 use log::trace;
+use nu_errors::ShellError;
+use nu_protocol::{Primitive, ReturnSuccess, Signature, UntaggedValue};
 
 pub struct Lines;
 
@@ -33,14 +33,13 @@ impl WholeStreamCommand for Lines {
 fn lines(args: CommandArgs, registry: &CommandRegistry) -> Result<OutputStream, ShellError> {
     let args = args.evaluate_once(registry)?;
     let tag = args.name_tag();
+    let name_span = tag.span;
     let input = args.input;
-
-    let input: InputStream = trace_stream!(target: "nu::trace_stream::lines", "input" = input);
 
     let stream = input
         .values
-        .map(move |v| match v.item {
-            Value::Primitive(Primitive::String(s)) => {
+        .map(move |v| {
+            if let Ok(s) = v.as_string() {
                 let split_result: Vec<_> = s.lines().filter(|s| s.trim() != "").collect();
 
                 trace!("split result = {:?}", split_result);
@@ -48,19 +47,20 @@ fn lines(args: CommandArgs, registry: &CommandRegistry) -> Result<OutputStream, 
                 let mut result = VecDeque::new();
                 for s in split_result {
                     result.push_back(ReturnSuccess::value(
-                        Value::Primitive(Primitive::String(s.into())).tagged_unknown(),
+                        UntaggedValue::Primitive(Primitive::Line(s.into())).into_untagged_value(),
                     ));
                 }
                 result
-            }
-            _ => {
+            } else {
                 let mut result = VecDeque::new();
+                let value_span = v.tag.span;
+
                 result.push_back(Err(ShellError::labeled_error_with_secondary(
                     "Expected a string from pipeline",
                     "requires string input",
-                    &tag,
+                    name_span,
                     "value originates from here",
-                    v.tag(),
+                    value_span,
                 )));
                 result
             }
